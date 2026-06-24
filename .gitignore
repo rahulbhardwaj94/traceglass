@@ -1,0 +1,11 @@
+node_modules/
+dist/
+*.tsbuildinfo
+*.log
+.traceglass/
+*.sqlite
+*.sqlite-journal
+.DS_Store
+
+# Local Claude Code settings (machine-specific, not shared)
+.claude/settings.local.json

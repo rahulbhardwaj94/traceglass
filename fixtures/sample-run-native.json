@@ -1,0 +1,134 @@
+{
+  "id": "run-underwrite-8821",
+  "name": "Underwriting · loan application #8821",
+  "currency": "INR",
+  "status": "completed",
+  "steps": [
+    {
+      "type": "user_input",
+      "label": "Underwrite loan application #8821",
+      "startedAt": "2026-06-20T09:00:00.000Z",
+      "durationMs": 5,
+      "tokens": 0,
+      "cost": 0,
+      "spanId": "run-underwrite-8821-span-0",
+      "input": {
+        "applicationId": "8821",
+        "product": "personal_loan",
+        "requestedAmount": 450000
+      }
+    },
+    {
+      "type": "plan",
+      "label": "Plan underwriting steps",
+      "startedAt": "2026-06-20T09:00:00.020Z",
+      "durationMs": 380,
+      "tokens": 240,
+      "cost": 0.42,
+      "spanId": "run-underwrite-8821-span-1",
+      "output": [
+        "fetch applicant profile",
+        "pull credit bureau score",
+        "assess affordability",
+        "decide"
+      ]
+    },
+    {
+      "type": "tool_call",
+      "label": "Tool: db_query applicant_profile",
+      "startedAt": "2026-06-20T09:00:00.410Z",
+      "durationMs": 64,
+      "tokens": 0,
+      "cost": 0,
+      "spanId": "run-underwrite-8821-span-2",
+      "toolName": "db_query",
+      "input": {
+        "sql": "SELECT * FROM applicants WHERE id = $1",
+        "params": [
+          "8821"
+        ]
+      },
+      "output": {
+        "rows": 1
+      },
+      "dataPayload": {
+        "applicantId": "8821",
+        "name": "R. Iyer",
+        "pan": "ABCPI1234K",
+        "monthlyIncome": 95000,
+        "existingEmis": 18000,
+        "accountAgeMonths": 54
+      }
+    },
+    {
+      "type": "llm_reasoning",
+      "label": "Assess affordability",
+      "startedAt": "2026-06-20T09:00:00.480Z",
+      "durationMs": 1120,
+      "tokens": 880,
+      "cost": 1.58,
+      "spanId": "run-underwrite-8821-span-3",
+      "input": {
+        "prompt": "Given income 95000 and EMIs 18000, assess capacity for a 450000 loan."
+      },
+      "output": "Net disposable income is ~77000/mo. A 450000 personal loan at 14% over 36 months is ~15400/mo EMI, pushing total EMIs to 33400 (35% of income). Within the 40% FOIR policy ceiling."
+    },
+    {
+      "type": "tool_call",
+      "label": "Tool: credit_bureau_api score",
+      "startedAt": "2026-06-20T09:00:01.610Z",
+      "durationMs": 240,
+      "tokens": 0,
+      "cost": 2,
+      "spanId": "run-underwrite-8821-span-4",
+      "toolName": "credit_bureau_api",
+      "input": {
+        "bureau": "CIBIL",
+        "pan": "ABCPI1234K"
+      },
+      "output": {
+        "status": "ok"
+      },
+      "dataPayload": {
+        "score": 766,
+        "openAccounts": 4,
+        "dpd30Plus": 0,
+        "enquiriesLast6m": 1
+      }
+    },
+    {
+      "type": "llm_reasoning",
+      "label": "Final decision reasoning",
+      "startedAt": "2026-06-20T09:00:01.860Z",
+      "durationMs": 980,
+      "tokens": 1020,
+      "cost": 1.84,
+      "spanId": "run-underwrite-8821-span-5",
+      "input": {
+        "prompt": "Decide approve/decline given affordability within FOIR and CIBIL 766."
+      },
+      "output": "CIBIL 766 (good), zero 30+ DPD, FOIR within policy. Approve at requested amount with standard rate."
+    },
+    {
+      "type": "final_output",
+      "label": "Decision: APPROVE",
+      "startedAt": "2026-06-20T09:00:02.840Z",
+      "durationMs": 12,
+      "tokens": 60,
+      "cost": 0.11,
+      "spanId": "run-underwrite-8821-span-6",
+      "output": {
+        "decision": "approve",
+        "amount": 450000,
+        "apr": 14,
+        "tenureMonths": 36
+      },
+      "dataPayload": {
+        "applicationId": "8821",
+        "decision": "approve",
+        "approvedAmount": 450000,
+        "decidedBy": "agent:underwriter-v3"
+      }
+    }
+  ]
+}

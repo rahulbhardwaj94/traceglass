@@ -1,0 +1,27 @@
+{
+  "name": "traceglass-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Flight recorder & audit dashboard for autonomous agents",
+  "workspaces": [
+    "packages/core",
+    "packages/cli",
+    "packages/web"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "npm run build -w @traceglass/core && npm run build -w @traceglass/web && npm run build -w traceglass",
+    "test": "vitest run",
+    "typecheck": "tsc -b packages/core packages/cli",
+    "lint": "eslint packages --ext .ts,.tsx",
+    "format": "prettier --write \"packages/**/*.{ts,tsx,json,css}\""
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0",
+    "prettier": "^3.4.0"
+  }
+}

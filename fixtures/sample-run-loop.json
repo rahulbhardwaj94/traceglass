@@ -1,0 +1,130 @@
+{
+  "id": "run-collections-4471",
+  "name": "Collections · account #4471 (stuck loop)",
+  "currency": "INR",
+  "status": "failed",
+  "steps": [
+    {
+      "type": "user_input",
+      "label": "Collections follow-up for account #4471",
+      "startedAt": "2026-06-20T09:00:00.000Z",
+      "durationMs": 4,
+      "tokens": 0,
+      "cost": 0,
+      "spanId": "run-collections-4471-span-0",
+      "input": {
+        "accountId": "4471",
+        "bucket": "30-59 DPD"
+      }
+    },
+    {
+      "type": "plan",
+      "label": "Plan collections outreach",
+      "startedAt": "2026-06-20T09:00:00.015Z",
+      "durationMs": 300,
+      "tokens": 210,
+      "cost": 0.38,
+      "spanId": "run-collections-4471-span-1",
+      "output": [
+        "check latest payment status",
+        "draft reminder",
+        "send"
+      ]
+    },
+    {
+      "type": "tool_call",
+      "label": "Tool: get_payment_status",
+      "startedAt": "2026-06-20T09:00:00.320Z",
+      "durationMs": 90,
+      "tokens": 0,
+      "cost": 0.05,
+      "spanId": "run-collections-4471-span-2",
+      "toolName": "get_payment_status",
+      "input": {
+        "accountId": "4471"
+      },
+      "output": {
+        "status": "pending",
+        "settledAt": null
+      },
+      "dataPayload": {
+        "accountId": "4471",
+        "outstanding": 22400,
+        "lastPaymentAt": null,
+        "status": "pending"
+      }
+    },
+    {
+      "type": "tool_call",
+      "label": "Tool: get_payment_status",
+      "startedAt": "2026-06-20T09:00:00.430Z",
+      "durationMs": 88,
+      "tokens": 0,
+      "cost": 0.05,
+      "spanId": "run-collections-4471-span-3",
+      "toolName": "get_payment_status",
+      "input": {
+        "accountId": "4471"
+      },
+      "output": {
+        "status": "pending",
+        "settledAt": null
+      },
+      "dataPayload": {
+        "accountId": "4471",
+        "outstanding": 22400,
+        "lastPaymentAt": null,
+        "status": "pending"
+      }
+    },
+    {
+      "type": "tool_call",
+      "label": "Tool: get_payment_status",
+      "startedAt": "2026-06-20T09:00:00.540Z",
+      "durationMs": 91,
+      "tokens": 0,
+      "cost": 0.05,
+      "spanId": "run-collections-4471-span-4",
+      "toolName": "get_payment_status",
+      "input": {
+        "accountId": "4471"
+      },
+      "output": {
+        "status": "pending",
+        "settledAt": null
+      },
+      "dataPayload": {
+        "accountId": "4471",
+        "outstanding": 22400,
+        "lastPaymentAt": null,
+        "status": "pending"
+      }
+    },
+    {
+      "type": "llm_reasoning",
+      "label": "Re-checking payment status before drafting",
+      "startedAt": "2026-06-20T09:00:00.640Z",
+      "durationMs": 9800,
+      "tokens": 7400,
+      "cost": 13.6,
+      "spanId": "run-collections-4471-span-5",
+      "input": {
+        "prompt": "Status still pending; verify once more before drafting the reminder."
+      },
+      "output": "Status appears unchanged. Will confirm payment status again to avoid dunning a paid account."
+    },
+    {
+      "type": "error",
+      "label": "Run aborted: step budget exceeded",
+      "startedAt": "2026-06-20T09:00:10.450Z",
+      "durationMs": 2,
+      "tokens": 0,
+      "cost": 0,
+      "spanId": "run-collections-4471-span-6",
+      "output": {
+        "error": "max_tool_iterations_exceeded",
+        "tool": "get_payment_status"
+      }
+    }
+  ]
+}

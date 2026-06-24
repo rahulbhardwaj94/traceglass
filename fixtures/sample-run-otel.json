@@ -1,0 +1,411 @@
+{
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "underwriter-agent"
+            }
+          },
+          {
+            "key": "traceglass.run.id",
+            "value": {
+              "stringValue": "run-underwrite-8821"
+            }
+          },
+          {
+            "key": "traceglass.run.name",
+            "value": {
+              "stringValue": "Underwriting · loan application #8821"
+            }
+          },
+          {
+            "key": "traceglass.run.currency",
+            "value": {
+              "stringValue": "INR"
+            }
+          },
+          {
+            "key": "traceglass.run.status",
+            "value": {
+              "stringValue": "completed"
+            }
+          }
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": {
+            "name": "traceglass.agent",
+            "version": "1.0.0"
+          },
+          "spans": [
+            {
+              "traceId": "0af7651916cd43dd8448eb211c80319c",
+              "spanId": "run-underwrite-8821-span-0",
+              "name": "Underwrite loan application #8821",
+              "kind": 1,
+              "startTimeUnixNano": "1781946000000000000",
+              "endTimeUnixNano": "1781946000005000000",
+              "attributes": [
+                {
+                  "key": "traceglass.step.type",
+                  "value": {
+                    "stringValue": "user_input"
+                  }
+                },
+                {
+                  "key": "traceglass.step.label",
+                  "value": {
+                    "stringValue": "Underwrite loan application #8821"
+                  }
+                },
+                {
+                  "key": "traceglass.cost",
+                  "value": {
+                    "doubleValue": 0
+                  }
+                },
+                {
+                  "key": "traceglass.input",
+                  "value": {
+                    "stringValue": "{\"applicationId\":\"8821\",\"product\":\"personal_loan\",\"requestedAmount\":450000}"
+                  }
+                }
+              ],
+              "status": {
+                "code": 1
+              }
+            },
+            {
+              "traceId": "0af7651916cd43dd8448eb211c80319c",
+              "spanId": "run-underwrite-8821-span-1",
+              "name": "Plan underwriting steps",
+              "kind": 1,
+              "startTimeUnixNano": "1781946000020000000",
+              "endTimeUnixNano": "1781946000400000000",
+              "attributes": [
+                {
+                  "key": "traceglass.step.type",
+                  "value": {
+                    "stringValue": "plan"
+                  }
+                },
+                {
+                  "key": "traceglass.step.label",
+                  "value": {
+                    "stringValue": "Plan underwriting steps"
+                  }
+                },
+                {
+                  "key": "traceglass.cost",
+                  "value": {
+                    "doubleValue": 0.42
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.input_tokens",
+                  "value": {
+                    "intValue": "144"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.output_tokens",
+                  "value": {
+                    "intValue": "96"
+                  }
+                },
+                {
+                  "key": "traceglass.output",
+                  "value": {
+                    "stringValue": "[\"fetch applicant profile\",\"pull credit bureau score\",\"assess affordability\",\"decide\"]"
+                  }
+                }
+              ],
+              "status": {
+                "code": 1
+              }
+            },
+            {
+              "traceId": "0af7651916cd43dd8448eb211c80319c",
+              "spanId": "run-underwrite-8821-span-2",
+              "name": "Tool: db_query applicant_profile",
+              "kind": 1,
+              "startTimeUnixNano": "1781946000410000000",
+              "endTimeUnixNano": "1781946000474000000",
+              "attributes": [
+                {
+                  "key": "traceglass.step.type",
+                  "value": {
+                    "stringValue": "tool_call"
+                  }
+                },
+                {
+                  "key": "traceglass.step.label",
+                  "value": {
+                    "stringValue": "Tool: db_query applicant_profile"
+                  }
+                },
+                {
+                  "key": "traceglass.cost",
+                  "value": {
+                    "doubleValue": 0
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.name",
+                  "value": {
+                    "stringValue": "db_query"
+                  }
+                },
+                {
+                  "key": "traceglass.input",
+                  "value": {
+                    "stringValue": "{\"sql\":\"SELECT * FROM applicants WHERE id = $1\",\"params\":[\"8821\"]}"
+                  }
+                },
+                {
+                  "key": "traceglass.output",
+                  "value": {
+                    "stringValue": "{\"rows\":1}"
+                  }
+                },
+                {
+                  "key": "traceglass.data_payload",
+                  "value": {
+                    "stringValue": "{\"applicantId\":\"8821\",\"name\":\"R. Iyer\",\"pan\":\"ABCPI1234K\",\"monthlyIncome\":95000,\"existingEmis\":18000,\"accountAgeMonths\":54}"
+                  }
+                }
+              ],
+              "status": {
+                "code": 1
+              }
+            },
+            {
+              "traceId": "0af7651916cd43dd8448eb211c80319c",
+              "spanId": "run-underwrite-8821-span-3",
+              "name": "Assess affordability",
+              "kind": 1,
+              "startTimeUnixNano": "1781946000480000000",
+              "endTimeUnixNano": "1781946001600000000",
+              "attributes": [
+                {
+                  "key": "traceglass.step.type",
+                  "value": {
+                    "stringValue": "llm_reasoning"
+                  }
+                },
+                {
+                  "key": "traceglass.step.label",
+                  "value": {
+                    "stringValue": "Assess affordability"
+                  }
+                },
+                {
+                  "key": "traceglass.cost",
+                  "value": {
+                    "doubleValue": 1.58
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.input_tokens",
+                  "value": {
+                    "intValue": "528"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.output_tokens",
+                  "value": {
+                    "intValue": "352"
+                  }
+                },
+                {
+                  "key": "traceglass.input",
+                  "value": {
+                    "stringValue": "{\"prompt\":\"Given income 95000 and EMIs 18000, assess capacity for a 450000 loan.\"}"
+                  }
+                },
+                {
+                  "key": "traceglass.output",
+                  "value": {
+                    "stringValue": "Net disposable income is ~77000/mo. A 450000 personal loan at 14% over 36 months is ~15400/mo EMI, pushing total EMIs to 33400 (35% of income). Within the 40% FOIR policy ceiling."
+                  }
+                }
+              ],
+              "status": {
+                "code": 1
+              }
+            },
+            {
+              "traceId": "0af7651916cd43dd8448eb211c80319c",
+              "spanId": "run-underwrite-8821-span-4",
+              "name": "Tool: credit_bureau_api score",
+              "kind": 1,
+              "startTimeUnixNano": "1781946001610000000",
+              "endTimeUnixNano": "1781946001850000000",
+              "attributes": [
+                {
+                  "key": "traceglass.step.type",
+                  "value": {
+                    "stringValue": "tool_call"
+                  }
+                },
+                {
+                  "key": "traceglass.step.label",
+                  "value": {
+                    "stringValue": "Tool: credit_bureau_api score"
+                  }
+                },
+                {
+                  "key": "traceglass.cost",
+                  "value": {
+                    "doubleValue": 2
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.name",
+                  "value": {
+                    "stringValue": "credit_bureau_api"
+                  }
+                },
+                {
+                  "key": "traceglass.input",
+                  "value": {
+                    "stringValue": "{\"bureau\":\"CIBIL\",\"pan\":\"ABCPI1234K\"}"
+                  }
+                },
+                {
+                  "key": "traceglass.output",
+                  "value": {
+                    "stringValue": "{\"status\":\"ok\"}"
+                  }
+                },
+                {
+                  "key": "traceglass.data_payload",
+                  "value": {
+                    "stringValue": "{\"score\":766,\"openAccounts\":4,\"dpd30Plus\":0,\"enquiriesLast6m\":1}"
+                  }
+                }
+              ],
+              "status": {
+                "code": 1
+              }
+            },
+            {
+              "traceId": "0af7651916cd43dd8448eb211c80319c",
+              "spanId": "run-underwrite-8821-span-5",
+              "name": "Final decision reasoning",
+              "kind": 1,
+              "startTimeUnixNano": "1781946001860000000",
+              "endTimeUnixNano": "1781946002840000000",
+              "attributes": [
+                {
+                  "key": "traceglass.step.type",
+                  "value": {
+                    "stringValue": "llm_reasoning"
+                  }
+                },
+                {
+                  "key": "traceglass.step.label",
+                  "value": {
+                    "stringValue": "Final decision reasoning"
+                  }
+                },
+                {
+                  "key": "traceglass.cost",
+                  "value": {
+                    "doubleValue": 1.84
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.input_tokens",
+                  "value": {
+                    "intValue": "612"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.output_tokens",
+                  "value": {
+                    "intValue": "408"
+                  }
+                },
+                {
+                  "key": "traceglass.input",
+                  "value": {
+                    "stringValue": "{\"prompt\":\"Decide approve/decline given affordability within FOIR and CIBIL 766.\"}"
+                  }
+                },
+                {
+                  "key": "traceglass.output",
+                  "value": {
+                    "stringValue": "CIBIL 766 (good), zero 30+ DPD, FOIR within policy. Approve at requested amount with standard rate."
+                  }
+                }
+              ],
+              "status": {
+                "code": 1
+              }
+            },
+            {
+              "traceId": "0af7651916cd43dd8448eb211c80319c",
+              "spanId": "run-underwrite-8821-span-6",
+              "name": "Decision: APPROVE",
+              "kind": 1,
+              "startTimeUnixNano": "1781946002840000000",
+              "endTimeUnixNano": "1781946002852000000",
+              "attributes": [
+                {
+                  "key": "traceglass.step.type",
+                  "value": {
+                    "stringValue": "final_output"
+                  }
+                },
+                {
+                  "key": "traceglass.step.label",
+                  "value": {
+                    "stringValue": "Decision: APPROVE"
+                  }
+                },
+                {
+                  "key": "traceglass.cost",
+                  "value": {
+                    "doubleValue": 0.11
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.input_tokens",
+                  "value": {
+                    "intValue": "36"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.output_tokens",
+                  "value": {
+                    "intValue": "24"
+                  }
+                },
+                {
+                  "key": "traceglass.output",
+                  "value": {
+                    "stringValue": "{\"decision\":\"approve\",\"amount\":450000,\"apr\":14,\"tenureMonths\":36}"
+                  }
+                },
+                {
+                  "key": "traceglass.data_payload",
+                  "value": {
+                    "stringValue": "{\"applicationId\":\"8821\",\"decision\":\"approve\",\"approvedAmount\":450000,\"decidedBy\":\"agent:underwriter-v3\"}"
+                  }
+                }
+              ],
+              "status": {
+                "code": 1
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
