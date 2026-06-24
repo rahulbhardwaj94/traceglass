@@ -19,6 +19,14 @@ altered since it was captured. Point it at your own trace with
 | :---: | :---: |
 | [![A repeated `get_payment_status` tool call inside the detected loop, showing the data it read and the cost climbing](docs/screenshots/step-loop.png)](docs/screenshots/step-loop.png) | [![The final step — the run aborts on an exceeded step budget after burning ₹14 in a stuck loop](docs/screenshots/step-error.png)](docs/screenshots/step-error.png) |
 
+### Replay your own Claude Code sessions
+
+Run `npx traceglass open` with no arguments and traceglass scans your
+`~/.claude/projects` logs and drops you on a **session picker** — choose any
+agent run and replay it in the full dashboard above. Nothing leaves your machine.
+
+[![The traceglass session picker listing Claude Code sessions by project, with first prompt, message count, and recency](docs/screenshots/session-picker.png)](docs/screenshots/session-picker.png)
+
 ---
 
 ## Why this exists
