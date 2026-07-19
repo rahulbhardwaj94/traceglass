@@ -18,9 +18,11 @@ export interface RunSummary {
 }
 
 /**
- * Append-only run store (PRD §6). A run, once ingested, is never updated or
- * deleted: there is intentionally NO update path in this class. That immutability
- * is what lets the hash chain stand as an audit record rather than a debug log.
+ * Append-only run store (PRD §6). A run, once ingested, is never updated:
+ * there is intentionally NO update path in this class. That immutability is
+ * what lets the hash chain stand as an audit record rather than a debug log.
+ * Deletion exists ONLY through pruneOlderThan (retention policy) — an explicit
+ * whole-run path whose results the caller must write to an audit log.
  */
 export class RunStore {
   private readonly db: Database.Database;
@@ -112,7 +114,35 @@ export class RunStore {
     }));
   }
 
+  /**
+   * Retention: delete whole runs ingested before the cutoff and return what
+   * was removed so the caller can audit-log it. This is the only delete path.
+   */
+  pruneOlderThan(cutoffIso: string): PrunedRun[] {
+    const prune = this.db.transaction((cutoff: string): PrunedRun[] => {
+      const rows = this.db
+        .prepare(`SELECT id, name, ingested_at, run_hash FROM runs WHERE ingested_at < ?`)
+        .all(cutoff) as Array<Record<string, unknown>>;
+      this.db.prepare(`DELETE FROM runs WHERE ingested_at < ?`).run(cutoff);
+      return rows.map((r) => ({
+        id: String(r.id),
+        name: String(r.name),
+        ingestedAt: String(r.ingested_at),
+        runHash: String(r.run_hash),
+      }));
+    });
+    return prune(cutoffIso);
+  }
+
   close(): void {
     this.db.close();
   }
+}
+
+/** What pruneOlderThan removed — enough to audit-log the deletion. */
+export interface PrunedRun {
+  id: string;
+  name: string;
+  ingestedAt: string;
+  runHash: string;
 }

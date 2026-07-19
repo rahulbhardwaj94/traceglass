@@ -61,6 +61,22 @@ export type Warning = z.infer<typeof WarningSchema>;
 export const RunStatusSchema = z.enum(['completed', 'failed']);
 export type RunStatus = z.infer<typeof RunStatusSchema>;
 
+/**
+ * Detached Ed25519 signature over the run's integrity anchor (§6). The signed
+ * message is canonicalize({ runId, runHash, signedAt }) — signing the anchor
+ * transitively covers every step via the hash chain, while runId/signedAt
+ * prevent a signature being transplanted onto another run. The signature is
+ * NEVER part of step hashing, so adding/removing it cannot break the chain.
+ */
+export const RunSignatureSchema = z.object({
+  algorithm: z.literal('ed25519'),
+  keyId: z.string().min(1), // first 16 hex chars of sha256(public key DER)
+  publicKey: z.string().min(1), // SPKI PEM
+  signature: z.string().min(1), // base64
+  signedAt: z.string(), // ISO 8601
+});
+export type RunSignature = z.infer<typeof RunSignatureSchema>;
+
 export const RunSchema = z.object({
   id: z.string().min(1),
   name: z.string(),
@@ -72,6 +88,7 @@ export const RunSchema = z.object({
   warnings: z.array(WarningSchema),
   steps: z.array(StepSchema),
   runHash: z.string(), // hash of final step's hash; the integrity anchor
+  signature: RunSignatureSchema.optional(), // absent on unsigned/legacy runs
 });
 export type Run = z.infer<typeof RunSchema>;
 

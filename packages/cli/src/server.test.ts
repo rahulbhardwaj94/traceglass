@@ -109,3 +109,138 @@ describe('Claude Code sessions API (v0.2)', () => {
     expect(res.statusCode).toBe(404);
   });
 });
+
+describe('serve mode: token auth + collector ingest (v0.3)', () => {
+  const nativeBody = JSON.parse(
+    readFileSync(join(fixturesDir, 'sample-run-native.json'), 'utf8'),
+  ) as { id: string };
+
+  async function collectorApp() {
+    const s = new RunStore(':memory:');
+    const a = buildServer(s, { token: 's3cret', enableIngest: true });
+    await a.ready();
+    return { s, a };
+  }
+
+  it('POST /api/ingest with the right token ingests and returns the runId', async () => {
+    const { s, a } = await collectorApp();
+    const res = await a.inject({
+      method: 'POST',
+      url: '/api/ingest',
+      headers: { authorization: 'Bearer s3cret', 'content-type': 'application/json' },
+      payload: nativeBody,
+    });
+    expect(res.statusCode).toBe(200);
+    const { runId, deduped } = res.json() as { runId: string; deduped: boolean };
+    expect(runId).toBe(nativeBody.id);
+    expect(deduped).toBe(false);
+    expect(s.getRun(runId)).not.toBeNull();
+
+    // Re-POST dedupes instead of failing on the append-only store.
+    const again = await a.inject({
+      method: 'POST',
+      url: '/api/ingest',
+      headers: { authorization: 'Bearer s3cret', 'content-type': 'application/json' },
+      payload: nativeBody,
+    });
+    expect((again.json() as { deduped: boolean }).deduped).toBe(true);
+    await a.close();
+    s.close();
+  });
+
+  it('rejects a wrong or missing token with 401', async () => {
+    const { s, a } = await collectorApp();
+    const wrong = await a.inject({
+      method: 'POST',
+      url: '/api/ingest',
+      headers: { authorization: 'Bearer nope', 'content-type': 'application/json' },
+      payload: nativeBody,
+    });
+    expect(wrong.statusCode).toBe(401);
+    const missing = await a.inject({
+      method: 'POST',
+      url: '/api/ingest',
+      headers: { 'content-type': 'application/json' },
+      payload: nativeBody,
+    });
+    expect(missing.statusCode).toBe(401);
+    await a.close();
+    s.close();
+  });
+
+  it('GET routes stay tokenless in loopback serve mode', async () => {
+    const { s, a } = await collectorApp();
+    const res = await a.inject({ method: 'GET', url: '/api/runs' });
+    expect(res.statusCode).toBe(200);
+    await a.close();
+    s.close();
+  });
+
+  it('requireAuthForReads gates GET /api routes too', async () => {
+    const s = new RunStore(':memory:');
+    const a = buildServer(s, { token: 't', enableIngest: true, requireAuthForReads: true });
+    await a.ready();
+    expect((await a.inject({ method: 'GET', url: '/api/runs' })).statusCode).toBe(401);
+    expect(
+      (
+        await a.inject({
+          method: 'GET',
+          url: '/api/runs',
+          headers: { authorization: 'Bearer t' },
+        })
+      ).statusCode,
+    ).toBe(200);
+    await a.close();
+    s.close();
+  });
+
+  it('POST /v1/traces accepts an OTLP/JSON export', async () => {
+    const { s, a } = await collectorApp();
+    const otelBody = JSON.parse(readFileSync(join(fixturesDir, 'sample-run-otel.json'), 'utf8'));
+    const res = await a.inject({
+      method: 'POST',
+      url: '/v1/traces',
+      headers: { authorization: 'Bearer s3cret', 'content-type': 'application/json' },
+      payload: otelBody,
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { partialSuccess: object; runId: string };
+    expect(body.partialSuccess).toEqual({});
+    expect(s.getRun(body.runId)).not.toBeNull();
+    await a.close();
+    s.close();
+  });
+
+  it('rejects an unparseable body with 400, not a crash', async () => {
+    const { s, a } = await collectorApp();
+    const res = await a.inject({
+      method: 'POST',
+      url: '/api/ingest',
+      headers: { authorization: 'Bearer s3cret', 'content-type': 'application/json' },
+      payload: { nonsense: true },
+    });
+    expect(res.statusCode).toBe(400);
+    await a.close();
+    s.close();
+  });
+
+  it('signer hook is applied to ingested runs', async () => {
+    const s = new RunStore(':memory:');
+    const a = buildServer(s, {
+      token: 't',
+      enableIngest: true,
+      signer: (r) => ({ ...r, name: `${r.name} [signed]` }),
+    });
+    await a.ready();
+    const res = await a.inject({
+      method: 'POST',
+      url: '/api/ingest',
+      headers: { authorization: 'Bearer t', 'content-type': 'application/json' },
+      payload: nativeBody,
+    });
+    const { runId } = res.json() as { runId: string };
+    expect(s.getRun(runId)!.name).toContain('[signed]');
+    await a.close();
+    s.close();
+  });
+});

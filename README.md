@@ -77,6 +77,16 @@ npx traceglass report <runId> -o audit.html
 
 # List everything you've ingested
 npx traceglass list
+
+# Sign new ingests with a local Ed25519 key (one-time setup)
+npx traceglass keygen
+
+# Export a run as a portable evidence file anyone can verify offline
+npx traceglass export <runId> -o run.tgev
+npx traceglass verify ./run.tgev   # works with no store, no keys, no network
+
+# Run as a team collector: fixed port, bearer-token ingest API, retention
+npx traceglass serve --port 4318 --token <token> --retain 180
 ```
 
 The `open` command always prints the dashboard URL, so it works over SSH or in
@@ -113,6 +123,60 @@ authentic?) are deliberately shown as **separate axes**: a failed run with an
 intact chain is a faithfully recorded failure; a tampered record is a different
 problem entirely.
 
+## Sign it, export it, prove it (v0.3)
+
+The hash chain proves the record is *internally consistent* — but whoever can
+edit the store can also re-chain it. v0.3 closes that hole:
+
+- **Ed25519 signing** — after `traceglass keygen`, every ingested run's anchor
+  is signed with a local key (private key never leaves `~/.traceglass/keys`,
+  mode 0600). An attacker who re-chains a tampered record now fails signature
+  verification — `verify` checks both axes.
+- **Portable evidence** — `traceglass export <runId>` writes a single `.tgev`
+  file containing the run, chain, signature, and public key. A regulator,
+  customer, or incident reviewer runs `traceglass verify file.tgev` and gets a
+  verdict **fully offline** — no store, no keys, no network. `report` renders
+  the HTML audit report from the same file.
+- **Anchoring** — `traceglass anchor --all` appends `{runId, runHash, signature}`
+  records to a JSONL file you push to WORM storage (e.g. S3 Object Lock); that
+  out-of-band copy is the trust root re-signing can't beat.
+
+## Record runs live with the SDK
+
+Post-hoc ingestion leaves a window between "agent ran" and "trace ingested."
+[`@traceglass/sdk`](./packages/sdk) closes it: each step is hash-chained and
+journaled to disk **the moment it happens**, so recorded history can't be
+reordered or edited afterward.
+
+```ts
+import { startRecording } from '@traceglass/sdk';
+
+const rec = startRecording({ name: 'collections agent', currency: 'INR' });
+rec.step({ type: 'user_input', label: 'Dun account 4471' });
+rec.step({ type: 'tool_call', toolName: 'get_payment_status', label: 'Tool: get_payment_status',
+           output: status, dataPayload: status, tokens: 812, cost: 0.4 });
+const run = await rec.end(); // verified, signed, stored — replay with `traceglass open --id`
+```
+
+If the process crashes mid-run, `traceglass recover` finalizes the journal into
+a `failed` run whose chain still verifies up to the crash point.
+
+## Team collector mode
+
+`traceglass serve` turns the same binary into a self-hosted collector: a fixed
+port, `POST /api/ingest` (native or OTLP/JSON, auto-detected) and an
+OTLP/HTTP-compatible `POST /v1/traces`, bearer-token auth on every write
+(timing-safe compare), and optional retention (`--retain <days>`) whose
+deletions are the store's **only** delete path and are audit-logged to
+`~/.traceglass/audit.jsonl`. Binding a non-loopback host without a token is
+refused outright — the local-first guarantee doesn't quietly degrade.
+
+```bash
+docker build -t traceglass .
+docker run -p 127.0.0.1:4318:4318 -v traceglass-data:/data \
+  -e TRACEGLASS_TOKEN=change-me traceglass
+```
+
 ## Development
 
 This is an npm-workspaces monorepo (Node ≥20, TypeScript, ESM):
@@ -120,13 +184,15 @@ This is an npm-workspaces monorepo (Node ≥20, TypeScript, ESM):
 - **`@traceglass/core`** — model (Zod), ingest (OTel + native + Claude Code
   sessions), analysis (loops, cost), integrity (hash chain), append-only store,
   HTML report.
-- **`traceglass`** (`packages/cli`) — Fastify server + `commander` binary.
+- **`@traceglass/sdk`** — live-capture recorder (chain fixed at capture time).
+- **`traceglass`** (`packages/cli`) — Fastify server/collector + `commander` binary.
 - **`@traceglass/web`** — React + Vite dashboard (bundled into the CLI on build).
 
 ```bash
 npm install
 npm run build
-npm test          # 62 tests across ingest, analysis, integrity, store, report, server, web
+npm test                    # 95 tests across ingest, analysis, integrity, signing, store, sdk, server, e2e
+node scripts/e2e-check.mjs  # outcome check against the real built CLI
 ```
 
 ## License

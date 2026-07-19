@@ -1,12 +1,14 @@
 {
   "name": "traceglass",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Flight recorder & tamper-evident audit dashboard for autonomous agents",
   "type": "module",
   "bin": {
     "traceglass": "./dist/bin.js"
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "engines": {
     "node": ">=20"
   },
@@ -14,11 +16,19 @@
     "build": "tsc -b && node scripts/copy-web.mjs",
     "test": "vitest run"
   },
-  "keywords": ["ai", "agents", "audit", "compliance", "opentelemetry", "observability", "llm"],
+  "keywords": [
+    "ai",
+    "agents",
+    "audit",
+    "compliance",
+    "opentelemetry",
+    "observability",
+    "llm"
+  ],
   "license": "MIT",
   "dependencies": {
     "@fastify/static": "^8.0.0",
-    "@traceglass/core": "0.2.0",
+    "@traceglass/core": "0.3.0",
     "commander": "^12.1.0",
     "fastify": "^5.2.0"
   }

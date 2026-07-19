@@ -7,8 +7,7 @@ import { finalizeRun } from '../pipeline.js';
 import { RunStore } from './store.js';
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), '../../../../fixtures');
-const load = (name: string): unknown =>
-  JSON.parse(readFileSync(join(fixturesDir, name), 'utf8'));
+const load = (name: string): unknown => JSON.parse(readFileSync(join(fixturesDir, name), 'utf8'));
 
 const run = finalizeRun(ingestNative(load('sample-run-native.json')));
 
@@ -43,5 +42,24 @@ describe('RunStore (acceptance §M2)', () => {
 
   it('returns null for an unknown id', () => {
     expect(store.getRun('nope')).toBeNull();
+  });
+
+  it('pruneOlderThan deletes only runs ingested before the cutoff and reports them', () => {
+    store.saveRun(run);
+    store.saveRun({ ...run, id: 'old-run' });
+    // Backdate one row directly (tests only — there is no app-level update path).
+    (
+      store as unknown as {
+        db: { prepare: (sql: string) => { run: (...a: unknown[]) => unknown } };
+      }
+    ).db
+      .prepare(`UPDATE runs SET ingested_at = ? WHERE id = ?`)
+      .run('2000-01-01T00:00:00.000Z', 'old-run');
+
+    const pruned = store.pruneOlderThan('2020-01-01T00:00:00.000Z');
+    expect(pruned.map((p) => p.id)).toEqual(['old-run']);
+    expect(pruned[0]!.runHash).toBe(run.runHash);
+    expect(store.getRun('old-run')).toBeNull();
+    expect(store.getRun(run.id)).not.toBeNull();
   });
 });

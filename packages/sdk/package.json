@@ -1,7 +1,7 @@
 {
-  "name": "@traceglass/core",
+  "name": "@traceglass/sdk",
   "version": "0.3.0",
-  "description": "Core engine for traceglass: model, ingest, analyze, integrity, store, report",
+  "description": "Live-capture SDK for traceglass: record agent runs with a hash chain fixed at capture time",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -16,10 +16,6 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "better-sqlite3": "^11.7.0",
-    "zod": "^3.24.0"
-  },
-  "devDependencies": {
-    "@types/better-sqlite3": "^7.6.11"
+    "@traceglass/core": "0.3.0"
   }
 }

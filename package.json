@@ -5,6 +5,7 @@
   "description": "Flight recorder & audit dashboard for autonomous agents",
   "workspaces": [
     "packages/core",
+    "packages/sdk",
     "packages/cli",
     "packages/web"
   ],
@@ -12,9 +13,9 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "npm run build -w @traceglass/core && npm run build -w @traceglass/web && npm run build -w traceglass",
+    "build": "npm run build -w @traceglass/core && npm run build -w @traceglass/sdk && npm run build -w @traceglass/web && npm run build -w traceglass",
     "test": "vitest run",
-    "typecheck": "tsc -b packages/core packages/cli",
+    "typecheck": "tsc -b packages/core packages/sdk packages/cli",
     "lint": "eslint packages --ext .ts,.tsx",
     "format": "prettier --write \"packages/**/*.{ts,tsx,json,css}\""
   },
