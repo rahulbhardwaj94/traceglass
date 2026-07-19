@@ -156,7 +156,9 @@ function toolResultOutput(content: unknown): unknown {
   if (typeof content === 'string') return content;
   if (Array.isArray(content)) {
     const texts = content
-      .map((b) => (typeof b === 'object' && b && 'text' in b ? (b as { text?: string }).text : undefined))
+      .map((b) =>
+        typeof b === 'object' && b && 'text' in b ? (b as { text?: string }).text : undefined,
+      )
       .filter((t): t is string => typeof t === 'string');
     if (texts.length > 0) return texts.join('\n');
     return content;
@@ -177,10 +179,11 @@ function firstUserPrompt(records: CCEntry[]): string {
  * Ingest Claude Code session records into a structural Run (hashes/warnings are
  * filled by the downstream pipeline via `finalizeRun`).
  */
-export function ingestClaudeCodeSession(records: unknown[], opts: ClaudeCodeIngestOptions = {}): Run {
-  const entries = records.filter(
-    (r): r is CCEntry => typeof r === 'object' && r !== null,
-  );
+export function ingestClaudeCodeSession(
+  records: unknown[],
+  opts: ClaudeCodeIngestOptions = {},
+): Run {
+  const entries = records.filter((r): r is CCEntry => typeof r === 'object' && r !== null);
 
   const prices = opts.prices ?? DEFAULT_MODEL_PRICES;
   const currency = opts.currency ?? DEFAULT_CURRENCY;
@@ -200,9 +203,8 @@ export function ingestClaudeCodeSession(records: unknown[], opts: ClaudeCodeInge
   }
 
   // 2) Walk entries in order, emitting draft steps.
-  const sessionId =
-    entries.find((e) => typeof e.sessionId === 'string')?.sessionId ?? 'claude-code';
-  const runId = opts.runId ?? `cc-${sessionId}`;
+  const sessionId = entries.find((e) => typeof e.sessionId === 'string')?.sessionId;
+  const runId = opts.runId ?? claudeCodeRunId(sessionId);
 
   const drafts: DraftStep[] = [];
   const indexOfLastAssistantText: { value: number } = { value: -1 };
@@ -225,9 +227,11 @@ export function ingestClaudeCodeSession(records: unknown[], opts: ClaudeCodeInge
     const cost = usage ? costForUsage(usage, priceForModel(e.message?.model, prices)) : 0;
     let firstStepOfEntry = true;
 
-    const push = (draft: Omit<DraftStep, 'startedAt' | 'durationMs' | 'tokens' | 'cost' | 'spanId'> & {
-      spanId: string;
-    }) => {
+    const push = (
+      draft: Omit<DraftStep, 'startedAt' | 'durationMs' | 'tokens' | 'cost' | 'spanId'> & {
+        spanId: string;
+      },
+    ) => {
       drafts.push({
         ...draft,
         startedAt,
@@ -308,4 +312,12 @@ export function ingestClaudeCodeSession(records: unknown[], opts: ClaudeCodeInge
   };
 
   return assembleRun(meta, drafts);
+}
+
+/**
+ * The run id a Claude Code session ingests under: `cc-<sessionId>`. Exposed so
+ * watch/dedupe logic can predict the id WITHOUT running full ingestion.
+ */
+export function claudeCodeRunId(sessionId?: string): string {
+  return `cc-${sessionId ?? 'claude-code'}`;
 }

@@ -11,7 +11,15 @@
  * exits 1 if any check fails.
  */
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -53,7 +61,7 @@ function assert(cond, msg) {
   if (!cond) throw new Error(msg);
 }
 
-console.log('\ntraceglass outcome check (v0.3 evidence + v0.4 governance)\n');
+console.log('\ntraceglass outcome check (evidence + governance + watch)\n');
 
 if (!existsSync(bin) || !existsSync(sdk)) {
   console.error('  Build first: npm run build');
@@ -104,7 +112,11 @@ check('serve ingests with the right token (200) and rejects a wrong one (401)', 
     stdio: 'ignore',
   });
   try {
-    execFileSync('node', ['-e', `
+    execFileSync(
+      'node',
+      [
+        '-e',
+        `
       const body = require('fs').readFileSync(${JSON.stringify(nativeFixture)}, 'utf8');
       async function main() {
         for (let i = 0; i < 40; i++) {
@@ -125,7 +137,10 @@ check('serve ingests with the right token (200) and rejects a wrong one (401)', 
         if (bad.status !== 401) throw new Error('expected 401, got ' + bad.status);
       }
       main().then(() => process.exit(0), (e) => { console.error(e.message); process.exit(1); });
-    `], { encoding: 'utf8' });
+    `,
+      ],
+      { encoding: 'utf8' },
+    );
   } finally {
     server.kill('SIGTERM');
   }
@@ -226,6 +241,53 @@ check('search finds the account across stored runs', () => {
   const output = cli(['search', '4471']);
   assert(output.includes('check-run'), `run not found in: ${output}`);
   assert(output.includes('hit(s)'), 'no hit summary');
+});
+
+// 15. watch --once: auto-record a Claude Code session as signed evidence
+check('watch --once records a settled Claude Code session (signed, idempotent)', () => {
+  const sessions = join(out, 'watch-sessions/-proj');
+  mkdirSync(sessions, { recursive: true });
+  const sessFile = join(sessions, 'sess-watch.jsonl');
+  writeFileSync(sessFile, readFileSync(join(root, 'fixtures/sample-claude-code-session.jsonl')));
+  // Age the file past any settle window.
+  const old = new Date(Date.now() - 3600_000);
+  utimesSync(sessFile, old, old);
+
+  const output = cli(['watch', '--once', '--dir', join(out, 'watch-sessions'), '--settle', '0']);
+  assert(/1 session\(s\) recorded/.test(output), `no ingest: ${output}`);
+  const verifyOut = cli(['verify', 'cc-sess-abc']);
+  assert(/Signature OK/.test(verifyOut), `watch run not signed: ${verifyOut}`);
+
+  const again = cli(['watch', '--once', '--dir', join(out, 'watch-sessions'), '--settle', '0']);
+  assert(/0 session\(s\) recorded/.test(again), `not idempotent: ${again}`);
+});
+
+// 16. watch --once with a violated policy exits 1 and audit-logs it
+check('watch --once fails the sweep on a policy violation (exit 1, audited)', () => {
+  const policyFile = join(out, 'watch-policy.json');
+  writeFileSync(
+    policyFile,
+    JSON.stringify({ name: 'coding guardrails', rules: { forbidTools: ['get_payment_status'] } }),
+  );
+  // Fresh home so the session ingests again under this policy.
+  const watchHome = join(out, 'watch-home-2');
+  const { code, output } = cliFails(
+    [
+      'watch',
+      '--once',
+      '--dir',
+      join(out, 'watch-sessions'),
+      '--settle',
+      '0',
+      '--policy',
+      policyFile,
+    ],
+    { home: watchHome },
+  );
+  assert(code === 1, `expected exit 1, got ${code}`);
+  assert(/policy FAIL/.test(output), `no FAIL verdict: ${output}`);
+  const audit = readFileSync(join(watchHome, 'audit.jsonl'), 'utf8');
+  assert(audit.includes('policy-violation'), 'violation not audit-logged');
 });
 
 for (const dir of [home, cleanHome, out]) rmSync(dir, { recursive: true, force: true });

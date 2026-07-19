@@ -8,6 +8,7 @@ export {
   ingestClaudeCodeSession,
   parseClaudeCodeJsonl,
   isClaudeCodeFormat,
+  claudeCodeRunId,
   type ClaudeCodeIngestOptions,
 } from './claude-code.js';
 export {
@@ -15,13 +16,10 @@ export {
   findSession,
   readSessionRecords,
   defaultSessionsDir,
+  sessionRunId,
   type SessionInfo,
 } from './claude-code-sessions.js';
-export {
-  DEFAULT_MODEL_PRICES,
-  type ModelPrice,
-  type ModelPriceTable,
-} from './model-prices.js';
+export { DEFAULT_MODEL_PRICES, type ModelPrice, type ModelPriceTable } from './model-prices.js';
 export type { DraftStep, DraftRunMeta } from './common.js';
 
 export type TraceFormat = 'otel' | 'native';

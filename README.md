@@ -93,6 +93,9 @@ npx traceglass check <runId-or-file> --policy policy.json --json
 
 # Sweep every stored run: which agents ever touched this account?
 npx traceglass search "4471"
+
+# Auto-record every finished Claude Code session as signed, policy-checked evidence
+npx traceglass watch --policy policy.json --anchor
 ```
 
 The `open` command always prints the dashboard URL, so it works over SSH or in
@@ -220,6 +223,30 @@ it was **allowed** to do.
   the questions an auditor asks first: is the record authentic (signature),
   is the event log complete (hash chain + anchor), who approved what (human
   oversight), and what data was read or mutated.
+
+## Watch mode: continuous governance for Claude Code (v0.5)
+
+Your coding agents already leave session logs; `traceglass watch` turns them
+into evidence without anyone lifting a finger:
+
+```bash
+npx traceglass keygen          # once
+npx traceglass watch --policy coding-policy.json --anchor
+```
+
+Every finished Claude Code session (settled for `--settle` seconds, default
+60) is automatically ingested, hash-chained, **signed**, checked against your
+policy, and **anchored** — and policy violations are written to the audit log.
+A rule like:
+
+```json
+{ "rules": { "forbidInputText": [".env", "rm -rf"], "forbidTools": ["WebFetch"] } }
+```
+
+means "an agent that touched a secrets file, ran a destructive command, or
+reached for the network gets flagged the moment its session ends." Run
+`traceglass watch --once` from cron or CI instead of the daemon — it exits 1
+if any new session violated policy. Nothing leaves the machine either way.
 
 ```bash
 docker build -t traceglass .

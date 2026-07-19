@@ -27,6 +27,12 @@ export const PolicyRulesSchema = z
     forbidTools: z.array(z.string().min(1)).optional(),
     /** Tool-name patterns that require a PRECEDING `approval` step. */
     requireApprovalFor: z.array(z.string().min(1)).optional(),
+    /**
+     * Fail any step whose input contains one of these text fragments
+     * (case-insensitive). Built for coding agents: ".env", "prod-db",
+     * "rm -rf" — "the agent must never touch X" as a one-liner.
+     */
+    forbidInputText: z.array(z.string().min(1)).optional(),
     /** Fail if the run is not cryptographically signed. */
     requireSignature: z.boolean().optional(),
     /** Warning kinds that fail the check (e.g. ["loop"]). */
@@ -136,6 +142,20 @@ export function evaluatePolicy(run: Run, policy: Policy): PolicyResult {
         rule: 'requireApprovalFor',
         message: `Tool "${pattern}" was called without a preceding approval step (${unapproved.length} time(s), first at step #${unapproved[0]!.index}).`,
         stepIds: unapproved.map((s) => s.id),
+      });
+    }
+  }
+
+  for (const needle of r.forbidInputText ?? []) {
+    const lower = needle.toLowerCase();
+    const hits = run.steps.filter(
+      (s) => s.input !== undefined && JSON.stringify(s.input).toLowerCase().includes(lower),
+    );
+    if (hits.length > 0) {
+      violations.push({
+        rule: 'forbidInputText',
+        message: `Forbidden input text "${needle}" appeared in ${hits.length} step(s) (first at step #${hits[0]!.index} "${hits[0]!.label}").`,
+        stepIds: hits.map((s) => s.id),
       });
     }
   }

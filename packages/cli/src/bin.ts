@@ -25,6 +25,7 @@ import {
   parseEvidence,
   parsePolicy,
   evaluatePolicy,
+  type Policy,
   type Run,
   type SessionInfo,
 } from '@traceglass/core';
@@ -33,12 +34,13 @@ import { startServe, startServer } from './server.js';
 import { openBrowser } from './open-browser.js';
 import { generateKeys, maybeSign } from './keys.js';
 import { FileAnchorSink, anchorRecordForRun, defaultAnchorsPath } from './anchors.js';
+import { sweepSessions } from './watch.js';
 
 const program = new Command();
 program
   .name('traceglass')
   .description('Flight recorder & tamper-evident audit dashboard for autonomous agents')
-  .version('0.4.0');
+  .version('0.5.0');
 
 function openStore(): RunStore {
   return new RunStore(storePath());
@@ -427,6 +429,73 @@ program
     process.on('SIGINT', shutdown);
     process.on('SIGTERM', shutdown);
   });
+
+program
+  .command('watch')
+  .description(
+    'Continuously turn finished Claude Code sessions into signed, policy-checked evidence',
+  )
+  .option('--dir <dir>', 'Claude Code projects dir (default: ~/.claude/projects)')
+  .option('--interval <secs>', 'seconds between sweeps', '30')
+  .option('--settle <secs>', 'ingest a session only after this long without changes', '60')
+  .option('--policy <file>', 'check each new run against this guardrail policy')
+  .option('--anchor', 'append each new run to the anchors file')
+  .option('--once', 'run a single sweep and exit; exits 1 if any policy violation was found')
+  .action(
+    async (opts: {
+      dir?: string;
+      interval: string;
+      settle: string;
+      policy?: string;
+      anchor?: boolean;
+      once?: boolean;
+    }) => {
+      const store = openStore();
+      let policy: Policy | undefined;
+      if (opts.policy) {
+        try {
+          policy = parsePolicy(JSON.parse(readFileSync(resolve(opts.policy), 'utf8')));
+        } catch (e) {
+          return die(`Could not read policy ${opts.policy}: ${friendly(e)}`);
+        }
+      }
+      const settleMs = Math.max(0, Number(opts.settle)) * 1000;
+      const sweep = () =>
+        sweepSessions(store, {
+          dir: opts.dir,
+          settleMs,
+          policy,
+          anchor: opts.anchor,
+          log: (line) => console.log(`  ${line}`),
+        });
+
+      if (opts.once) {
+        const result = await sweep();
+        console.log(
+          `Sweep done: ${result.ingested.length} session(s) recorded, ${result.skipped} skipped, ${result.violations} policy violation(s).`,
+        );
+        store.close();
+        if (result.violations > 0) process.exit(1);
+        return;
+      }
+
+      const intervalMs = Math.max(5, Number(opts.interval)) * 1000;
+      console.log('\n  traceglass watch — every finished Claude Code session becomes evidence.');
+      console.log(
+        `  Sweeping every ${intervalMs / 1000}s (settle ${settleMs / 1000}s)${policy ? ' · policy checks on' : ''}${opts.anchor ? ' · anchoring on' : ''}.`,
+      );
+      console.log('  Press Ctrl+C to stop.\n');
+      await sweep();
+      const timer = setInterval(() => void sweep(), intervalMs);
+      const shutdown = () => {
+        clearInterval(timer);
+        store.close();
+        process.exit(0);
+      };
+      process.on('SIGINT', shutdown);
+      process.on('SIGTERM', shutdown);
+    },
+  );
 
 program
   .command('recover')

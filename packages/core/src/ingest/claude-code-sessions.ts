@@ -1,7 +1,13 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
-import { extractUserText, isLabelWorthy, oneLine, parseClaudeCodeJsonl } from './claude-code.js';
+import {
+  claudeCodeRunId,
+  extractUserText,
+  isLabelWorthy,
+  oneLine,
+  parseClaudeCodeJsonl,
+} from './claude-code.js';
 
 /**
  * Discovery for Claude Code session logs. Claude Code stores one JSONL file per
@@ -114,9 +120,7 @@ function decodeDirName(file: string): string {
  */
 export function discoverSessions(dir: string = defaultSessionsDir()): SessionInfo[] {
   const files = listJsonlFiles(dir);
-  const sessions = files
-    .map(summarize)
-    .filter((s) => s.messageCount > 0);
+  const sessions = files.map(summarize).filter((s) => s.messageCount > 0);
   sessions.sort((a, b) => (a.endedAt < b.endedAt ? 1 : a.endedAt > b.endedAt ? -1 : 0));
   return sessions;
 }
@@ -129,4 +133,22 @@ export function findSession(id: string, dir: string = defaultSessionsDir()): Ses
 /** Read and parse a session's JSONL records from disk. */
 export function readSessionRecords(file: string): unknown[] {
   return parseClaudeCodeJsonl(readFileSync(file, 'utf8'));
+}
+
+/**
+ * Predict the run id a session file would ingest under, by scanning for the
+ * first `sessionId` in the log — cheap enough to call on every watch sweep,
+ * with no hashing or model assembly.
+ */
+export function sessionRunId(file: string): string {
+  for (const line of readFileSync(file, 'utf8').split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const parsed = JSON.parse(line) as { sessionId?: unknown };
+      if (typeof parsed.sessionId === 'string') return claudeCodeRunId(parsed.sessionId);
+    } catch {
+      // Skip malformed lines, same as ingestion does.
+    }
+  }
+  return claudeCodeRunId(undefined);
 }

@@ -134,6 +134,22 @@ describe('evaluatePolicy', () => {
     expect(result.ok).toBe(false);
   });
 
+  it('forbidInputText flags steps whose input contains the fragment, case-insensitively (v0.5)', () => {
+    const coding = makeRun([
+      step(0, 'user_input'),
+      step(1, 'tool_call', { toolName: 'Edit', input: { file_path: '/app/.ENV', content: 'x' } }),
+      step(2, 'tool_call', { toolName: 'Bash', input: { command: 'ls' } }),
+      step(3, 'final_output'),
+    ]);
+    const result = evaluatePolicy(
+      coding,
+      parsePolicy({ rules: { forbidInputText: ['.env', 'rm -rf'] } }),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.violations).toHaveLength(1); // only .env matched, only step 1
+    expect(result.violations[0]!.stepIds).toEqual(['r:1']);
+  });
+
   it('requireSignature fails an unsigned run and names the fix', () => {
     const result = evaluatePolicy(base, parsePolicy({ rules: { requireSignature: true } }));
     expect(result.ok).toBe(false);
