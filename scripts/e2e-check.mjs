@@ -53,7 +53,7 @@ function assert(cond, msg) {
   if (!cond) throw new Error(msg);
 }
 
-console.log('\ntraceglass v0.3 outcome check\n');
+console.log('\ntraceglass outcome check (v0.3 evidence + v0.4 governance)\n');
 
 if (!existsSync(bin) || !existsSync(sdk)) {
   console.error('  Build first: npm run build');
@@ -175,11 +175,57 @@ check('anchor --all writes idempotent anchor records', () => {
   assert(first === second, `not idempotent: ${first} → ${second}`);
 });
 
-// 10. report from evidence alone
-check('report renders from the evidence file alone', () => {
+// 10. report from evidence alone (with the v0.4 compliance summary)
+check('report renders from the evidence file alone, with a compliance summary', () => {
   const reportFile = join(out, 'audit.html');
   cli(['report', evidenceFile, '-o', reportFile], { home: cleanHome });
-  assert(readFileSync(reportFile, 'utf8').includes('<!doctype html>'), 'no HTML report');
+  const html = readFileSync(reportFile, 'utf8');
+  assert(html.includes('<!doctype html>'), 'no HTML report');
+  assert(html.includes('Compliance summary'), 'compliance summary section missing');
+});
+
+// 11. verify --json for CI
+check('verify --json emits machine-readable ok:true', () => {
+  const parsed = JSON.parse(cli(['verify', runId, '--json']));
+  assert(parsed.ok === true, `expected ok:true, got ${JSON.stringify(parsed).slice(0, 120)}`);
+  assert(parsed.chain.ok === true && parsed.signature.ok === true, 'chain/signature not ok');
+});
+
+// 12. policy check: pass
+check('check passes a satisfied guardrail policy (exit 0)', () => {
+  const policyFile = join(out, 'policy-pass.json');
+  writeFileSync(
+    policyFile,
+    JSON.stringify({
+      name: 'sane limits',
+      rules: { maxCostPerRun: 100, requireSignature: true, forbidWarnings: ['loop'] },
+    }),
+  );
+  const output = cli(['check', runId, '--policy', policyFile]);
+  assert(/Policy .*PASS/.test(output), `no PASS verdict: ${output}`);
+});
+
+// 13. policy check: fail names the violated rule, exit 1
+check('check fails an unmet policy (exit 1, names the rule)', () => {
+  const policyFile = join(out, 'policy-fail.json');
+  writeFileSync(
+    policyFile,
+    JSON.stringify({
+      name: 'approval required',
+      rules: { requireApprovalFor: ['get_payment_status'], maxCostPerRun: 0.01 },
+    }),
+  );
+  const { code, output } = cliFails(['check', runId, '--policy', policyFile]);
+  assert(code === 1, `expected exit 1, got ${code}`);
+  assert(output.includes('requireApprovalFor'), `rule not named: ${output}`);
+  assert(output.includes('maxCostPerRun'), `second rule not named: ${output}`);
+});
+
+// 14. cross-run search
+check('search finds the account across stored runs', () => {
+  const output = cli(['search', '4471']);
+  assert(output.includes('check-run'), `run not found in: ${output}`);
+  assert(output.includes('hit(s)'), 'no hit summary');
 });
 
 for (const dir of [home, cleanHome, out]) rmSync(dir, { recursive: true, force: true });

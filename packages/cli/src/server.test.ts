@@ -110,6 +110,23 @@ describe('Claude Code sessions API (v0.2)', () => {
   });
 });
 
+describe('search API (v0.4)', () => {
+  it('GET /api/search finds steps across runs by payload text', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/search?q=4471' });
+    expect(res.statusCode).toBe(200);
+    const hits = res.json() as Array<{ runId: string; snippet: string }>;
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits.map((h) => h.runId)).toContain(run.id);
+    expect(hits[0]!.snippet).toContain('4471');
+  });
+
+  it('rejects a missing query with 400 and caps results with limit', async () => {
+    expect((await app.inject({ method: 'GET', url: '/api/search' })).statusCode).toBe(400);
+    const limited = await app.inject({ method: 'GET', url: '/api/search?q=a&limit=2' });
+    expect((limited.json() as unknown[]).length).toBeLessThanOrEqual(2);
+  });
+});
+
 describe('serve mode: token auth + collector ingest (v0.3)', () => {
   const nativeBody = JSON.parse(
     readFileSync(join(fixturesDir, 'sample-run-native.json'), 'utf8'),

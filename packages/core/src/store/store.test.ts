@@ -44,6 +44,28 @@ describe('RunStore (acceptance §M2)', () => {
     expect(store.getRun('nope')).toBeNull();
   });
 
+  it('searchRuns finds steps by payload text with run + step context (v0.4)', () => {
+    store.saveRun(run);
+    const loopRun = finalizeRun(ingestNative(load('sample-run-loop.json')));
+    store.saveRun(loopRun);
+
+    const hits = store.searchRuns('4471');
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits.every((h) => h.runId === loopRun.id)).toBe(true); // only the collections run mentions 4471
+    expect(hits[0]!.snippet.toLowerCase()).toContain('4471');
+    expect(hits[0]!.stepIndex).toBeGreaterThanOrEqual(0);
+
+    // Case-insensitive; misses return empty, not errors.
+    expect(store.searchRuns('COLLECTIONS').length).toBeGreaterThan(0);
+    expect(store.searchRuns('zz-no-such-text-zz')).toEqual([]);
+
+    // LIKE metacharacters are literals: '4_71' must NOT wildcard-match '4471'.
+    expect(store.searchRuns('4_71')).toEqual([]);
+
+    // Limit caps results.
+    expect(store.searchRuns('a', { limit: 3 }).length).toBeLessThanOrEqual(3);
+  });
+
   it('pruneOlderThan deletes only runs ingested before the cutoff and reports them', () => {
     store.saveRun(run);
     store.saveRun({ ...run, id: 'old-run' });

@@ -1,5 +1,6 @@
 import type { Run, Step, Warning } from '../model.js';
 import { verifyRun } from '../integrity/verify.js';
+import { verifySignature } from '../integrity/signing.js';
 
 /**
  * Render a standalone, self-contained HTML audit report for a run (PRD §M3).
@@ -42,6 +43,8 @@ export function renderReport(run: Run): string {
   </table>
 </section>
 
+${renderCompliance(run)}
+
 ${renderWarnings(run.warnings)}
 
 <section>
@@ -62,6 +65,62 @@ ${renderWarnings(run.warnings)}
 </footer>
 </body>
 </html>`;
+}
+
+/**
+ * Compliance summary (v0.4): the questions an auditor asks first — is the
+ * record authentic and attributable, who approved what, and what data did the
+ * agent actually touch — answered up front, mapped to the record-keeping
+ * duties of frameworks like EU AI Act Art. 12 (event logging), Art. 14
+ * (human oversight), and SOC 2 change-management evidence.
+ */
+function renderCompliance(run: Run): string {
+  const sig = verifySignature(run);
+  const sigRow = run.signature
+    ? sig.ok
+      ? `Signed &middot; Ed25519, keyId <span class="mono">${esc(run.signature.keyId)}</span>, at ${esc(run.signature.signedAt)}`
+      : `Signature INVALID (keyId <span class="mono">${esc(run.signature.keyId)}</span>)`
+    : 'Unsigned (legacy record, or keygen not run before ingest)';
+
+  const approvals = run.steps.filter((s) => s.type === 'approval');
+  const approvalRows =
+    approvals.length === 0
+      ? `<p class="muted">No human approval steps were recorded in this run.</p>`
+      : `<ul>${approvals
+          .map(
+            (a) =>
+              `<li>Step #${a.index} &middot; ${esc(a.label)} &middot; <span class="mono">${esc(a.startedAt)}</span></li>`,
+          )
+          .join('\n')}</ul>`;
+
+  const touched = run.steps.filter((s) => s.dataPayload !== undefined);
+  const touchedRows =
+    touched.length === 0
+      ? `<p class="muted">No step recorded a data payload.</p>`
+      : `<table class="kv">${touched
+          .map(
+            (s) =>
+              `<tr><th>#${s.index} ${esc(s.toolName ?? s.type)}</th><td>${esc(truncate(JSON.stringify(s.dataPayload), 160))}</td></tr>`,
+          )
+          .join('\n')}</table>`;
+
+  return `<section>
+  <h2>Compliance summary</h2>
+  <table class="kv">
+    <tr><th>Record authenticity</th><td>${sigRow}</td></tr>
+    <tr><th>Event log completeness</th><td>${run.totals.steps} hash-chained steps; anchor <span class="mono break">${esc(run.runHash)}</span></td></tr>
+    <tr><th>Human oversight</th><td>${approvals.length} approval step(s) recorded</td></tr>
+    <tr><th>Data touched</th><td>${touched.length} step(s) read or mutated data</td></tr>
+  </table>
+  <h3>Approvals</h3>
+  ${approvalRows}
+  <h3>Data read / mutated</h3>
+  ${touchedRows}
+</section>`;
+}
+
+function truncate(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
 function renderWarnings(warnings: Warning[]): string {

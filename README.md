@@ -87,6 +87,12 @@ npx traceglass verify ./run.tgev   # works with no store, no keys, no network
 
 # Run as a team collector: fixed port, bearer-token ingest API, retention
 npx traceglass serve --port 4318 --token <token> --retain 180
+
+# Assert what a run was ALLOWED to do (exit 1 on any violation — CI-ready)
+npx traceglass check <runId-or-file> --policy policy.json --json
+
+# Sweep every stored run: which agents ever touched this account?
+npx traceglass search "4471"
 ```
 
 The `open` command always prints the dashboard URL, so it works over SSH or in
@@ -171,6 +177,50 @@ deletions are the store's **only** delete path and are audit-logged to
 `~/.traceglass/audit.jsonl`. Binding a non-loopback host without a token is
 refused outright — the local-first guarantee doesn't quietly degrade.
 
+## Governance: policies, approvals, search (v0.4)
+
+Recording what an agent did is half the job; the other half is asserting what
+it was **allowed** to do.
+
+- **Guardrail policies** — a plain JSON file of rules, checked against the
+  evidence with `traceglass check` (works on stored runs *and* exported `.tgev`
+  files, so a reviewer can police a record they received offline):
+
+  ```json
+  {
+    "name": "payments guardrails",
+    "rules": {
+      "maxCostPerRun": 50,
+      "maxCostPerStep": 5,
+      "forbidTools": ["*_delete"],
+      "requireApprovalFor": ["payments.*"],
+      "requireSignature": true,
+      "forbidWarnings": ["loop"]
+    }
+  }
+  ```
+
+  Integrity is checked alongside the rules — a policy verdict is only issued
+  over an authentic record. `--json` (also on `verify`) makes both commands
+  CI gates: wire `traceglass check` into a pipeline and a run that called
+  `payments.refund` without sign-off fails the build.
+
+- **Approval steps** — `approval` is a first-class step type: record who
+  signed off on what (via the SDK or any ingest source), and
+  `requireApprovalFor` enforces that sensitive tools fire only *after* an
+  approval step. "Show me an agent action nobody approved" is now a query,
+  not an archaeology project.
+
+- **Cross-run search** — `traceglass search <text>` (and `GET /api/search`)
+  sweeps every stored run's labels, tool names, and payloads. "Which runs
+  ever touched account 4471?" — the shape of a GDPR data-subject request or
+  an incident sweep — is one command.
+
+- **Compliance summary in reports** — every HTML audit report now leads with
+  the questions an auditor asks first: is the record authentic (signature),
+  is the event log complete (hash chain + anchor), who approved what (human
+  oversight), and what data was read or mutated.
+
 ```bash
 docker build -t traceglass .
 docker run -p 127.0.0.1:4318:4318 -v traceglass-data:/data \
@@ -191,7 +241,7 @@ This is an npm-workspaces monorepo (Node ≥20, TypeScript, ESM):
 ```bash
 npm install
 npm run build
-npm test                    # 95 tests across ingest, analysis, integrity, signing, store, sdk, server, e2e
+npm test                    # 100+ tests across ingest, analysis, integrity, signing, policy, store, sdk, server, e2e
 node scripts/e2e-check.mjs  # outcome check against the real built CLI
 ```
 

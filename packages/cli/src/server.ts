@@ -96,11 +96,9 @@ export function buildServer(store: RunStore, opts: ServerOptions = {}): FastifyI
       try {
         return saveIngested(ingestAndFinalize(req.body));
       } catch (e) {
-        return reply
-          .code(400)
-          .send({
-            error: e instanceof Error ? (e.message.split('\n')[0] ?? e.message) : String(e),
-          });
+        return reply.code(400).send({
+          error: e instanceof Error ? (e.message.split('\n')[0] ?? e.message) : String(e),
+        });
       }
     });
 
@@ -110,11 +108,9 @@ export function buildServer(store: RunStore, opts: ServerOptions = {}): FastifyI
         const result = saveIngested(finalizeRun(ingestOtel(req.body)));
         return { partialSuccess: {}, ...result };
       } catch (e) {
-        return reply
-          .code(400)
-          .send({
-            error: e instanceof Error ? (e.message.split('\n')[0] ?? e.message) : String(e),
-          });
+        return reply.code(400).send({
+          error: e instanceof Error ? (e.message.split('\n')[0] ?? e.message) : String(e),
+        });
       }
     });
   }
@@ -141,6 +137,16 @@ export function buildServer(store: RunStore, opts: ServerOptions = {}): FastifyI
       .header('content-type', 'text/html; charset=utf-8')
       .header('content-disposition', `attachment; filename="traceglass-${run.id}.html"`)
       .send(html);
+  });
+
+  // Cross-run step search (v0.4): ?q=<text>&limit=<n>
+  app.get<{ Querystring: { q?: string; limit?: string } }>('/api/search', async (req, reply) => {
+    const q = (req.query.q ?? '').trim();
+    if (!q) return reply.code(400).send({ error: 'missing query parameter q' });
+    const limit = req.query.limit ? Number(req.query.limit) : undefined;
+    return store.searchRuns(q, {
+      limit: limit !== undefined && Number.isFinite(limit) && limit > 0 ? limit : undefined,
+    });
   });
 
   // Claude Code session discovery + on-demand ingestion (v0.2 session picker).

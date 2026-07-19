@@ -34,4 +34,14 @@ describe('renderReport', () => {
     expect(html).toContain('called 3x in a row');
     expect(html).toContain('outstanding');
   });
+
+  it('includes the compliance summary with signature, oversight, and data-touched counts (v0.4)', () => {
+    expect(html).toContain('Compliance summary');
+    expect(html).toContain('Unsigned'); // fixture run predates keygen
+    expect(html).toContain('Human oversight');
+    expect(html).toContain('No human approval steps were recorded');
+    expect(html).toContain('Data touched');
+    // The fixture has steps carrying dataPayload, so the table renders rows.
+    expect(html).toContain('Data read / mutated');
+  });
 });

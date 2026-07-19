@@ -8,10 +8,12 @@ import Database from 'better-sqlite3';
 import {
   RunStore,
   createEnvelope,
+  evaluatePolicy,
   finalizeJournal,
   hashStep,
   ingestAndFinalize,
   parseEvidence,
+  parsePolicy,
   readJournal,
   verifyRun,
   verifyRunFull,
@@ -231,5 +233,57 @@ describe('v0.3 outcome test', () => {
     expect(recovered.status).toBe('failed');
     expect(recovered.totals.steps).toBe(2);
     expect(verifyRun(recovered).ok).toBe(true);
+  });
+
+  it('10. approval-gated policy: pass with approval, fail without, search finds the account (v0.4)', async () => {
+    // A run where a human approves BEFORE the sensitive tool fires.
+    const rec = startRecording({ name: 'gated refund agent', dir: home, id: 'e2e-gated' });
+    rec.step({ type: 'user_input', label: 'Refund account 9982', input: { account: '9982' } });
+    rec.step({
+      type: 'approval',
+      label: 'Supervisor approved refund',
+      input: { approver: 'lead-ops', decision: 'approve' },
+      dataPayload: { approver: 'lead-ops', decision: 'approve' },
+    });
+    rec.step({
+      type: 'tool_call',
+      toolName: 'payments.refund',
+      label: 'Tool: payments.refund',
+      input: { account: '9982', amount: 120 },
+      output: { refunded: true },
+      dataPayload: { mutated: 'payments', account: '9982' },
+      cost: 0.5,
+    });
+    rec.step({ type: 'final_output', label: 'Refund issued' });
+    const gated = await rec.end();
+
+    const policy = parsePolicy({
+      name: 'payments guardrails',
+      rules: {
+        requireApprovalFor: ['payments.*'],
+        forbidTools: ['*_delete'],
+        requireSignature: true,
+        forbidWarnings: ['loop'],
+        maxCostPerRun: 10,
+      },
+    });
+    // The gated run satisfies every rule (it was auto-signed — keys exist).
+    expect(evaluatePolicy(gated, policy).ok).toBe(true);
+
+    // The earlier e2e-run called tools with NO approval step → same policy fails.
+    const store = new RunStore(join(home, 'traceglass.sqlite'));
+    const ungated = store.getRun('e2e-run')!;
+    const failed = evaluatePolicy(ungated, {
+      ...policy,
+      rules: { requireApprovalFor: ['get_payment_status'] },
+    });
+    expect(failed.ok).toBe(false);
+    expect(failed.violations[0]!.rule).toBe('requireApprovalFor');
+
+    // Search sweeps the store: "which runs touched account 9982?"
+    const hits = store.searchRuns('9982');
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits.every((h) => h.runId === 'e2e-gated')).toBe(true);
+    store.close();
   });
 });

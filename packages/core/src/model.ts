@@ -14,6 +14,7 @@ export const StepTypeSchema = z.enum([
   'tool_call', // includes API + DB calls
   'llm_reasoning',
   'branch',
+  'approval', // human-in-the-loop sign-off (v0.4); who/what/decision go in input/dataPayload
   'final_output',
   'error',
 ]);

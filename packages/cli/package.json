@@ -1,6 +1,6 @@
 {
   "name": "traceglass",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Flight recorder & tamper-evident audit dashboard for autonomous agents",
   "type": "module",
   "bin": {
@@ -28,7 +28,7 @@
   "license": "MIT",
   "dependencies": {
     "@fastify/static": "^8.0.0",
-    "@traceglass/core": "0.3.0",
+    "@traceglass/core": "0.4.0",
     "commander": "^12.1.0",
     "fastify": "^5.2.0"
   }

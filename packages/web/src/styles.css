@@ -610,6 +610,11 @@ body.grabbing * {
   color: #7fb0ff;
   border-color: color-mix(in oklab, #7fb0ff 35%, transparent);
 }
+.typechip.approval {
+  color: var(--ok);
+  border-color: color-mix(in oklab, var(--ok) 40%, transparent);
+  background: color-mix(in oklab, var(--ok) 12%, var(--panel));
+}
 .detail-title {
   font-size: 21px;
   font-weight: 700;

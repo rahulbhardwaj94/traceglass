@@ -8,6 +8,7 @@ export type StepType =
   | 'tool_call'
   | 'llm_reasoning'
   | 'branch'
+  | 'approval'
   | 'final_output'
   | 'error';
 

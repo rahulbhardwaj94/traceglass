@@ -115,6 +115,50 @@ export class RunStore {
   }
 
   /**
+   * Cross-run search (v0.4): find steps whose label, tool name, or payloads
+   * contain the query text (case-insensitive). SQL narrows to candidate rows;
+   * the precise match runs over the parsed steps so hits carry step context.
+   * Answers questions like "which runs ever touched account 4471?" — the shape
+   * of a GDPR data-subject request or an incident sweep.
+   */
+  searchRuns(query: string, opts: { limit?: number } = {}): SearchHit[] {
+    const limit = opts.limit ?? 50;
+    const needle = query.toLowerCase();
+    const rows = this.db
+      .prepare(
+        `SELECT id, name, data FROM runs WHERE data LIKE ? ESCAPE '\\' ORDER BY ingested_at DESC`,
+      )
+      .all(`%${escapeLike(query)}%`) as Array<{ id: string; name: string; data: string }>;
+
+    const hits: SearchHit[] = [];
+    for (const row of rows) {
+      const run = RunSchema.parse(JSON.parse(row.data));
+      for (const step of run.steps) {
+        const haystacks = [
+          step.label,
+          step.toolName ?? '',
+          step.input !== undefined ? JSON.stringify(step.input) : '',
+          step.output !== undefined ? JSON.stringify(step.output) : '',
+          step.dataPayload !== undefined ? JSON.stringify(step.dataPayload) : '',
+        ];
+        const matched = haystacks.find((h) => h.toLowerCase().includes(needle));
+        if (matched === undefined) continue;
+        hits.push({
+          runId: run.id,
+          runName: run.name,
+          stepId: step.id,
+          stepIndex: step.index,
+          stepType: step.type,
+          label: step.label,
+          snippet: makeSnippet(matched, needle),
+        });
+        if (hits.length >= limit) return hits;
+      }
+    }
+    return hits;
+  }
+
+  /**
    * Retention: delete whole runs ingested before the cutoff and return what
    * was removed so the caller can audit-log it. This is the only delete path.
    */
@@ -145,4 +189,29 @@ export interface PrunedRun {
   name: string;
   ingestedAt: string;
   runHash: string;
+}
+
+/** One step-level match from searchRuns. */
+export interface SearchHit {
+  runId: string;
+  runName: string;
+  stepId: string;
+  stepIndex: number;
+  stepType: Run['steps'][number]['type'];
+  label: string;
+  /** Short excerpt of the matched text around the query. */
+  snippet: string;
+}
+
+/** Escape SQL LIKE metacharacters in user input. */
+function escapeLike(text: string): string {
+  return text.replace(/[\\%_]/g, (c) => `\\${c}`);
+}
+
+/** Excerpt ~80 chars of matched text centred on the first occurrence. */
+function makeSnippet(haystack: string, lowerNeedle: string): string {
+  const at = haystack.toLowerCase().indexOf(lowerNeedle);
+  const start = Math.max(0, at - 30);
+  const end = Math.min(haystack.length, at + lowerNeedle.length + 50);
+  return `${start > 0 ? '…' : ''}${haystack.slice(start, end)}${end < haystack.length ? '…' : ''}`;
 }

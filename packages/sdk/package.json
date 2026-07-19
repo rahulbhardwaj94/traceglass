@@ -1,6 +1,6 @@
 {
   "name": "@traceglass/sdk",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Live-capture SDK for traceglass: record agent runs with a hash chain fixed at capture time",
   "type": "module",
   "main": "./dist/index.js",
@@ -16,6 +16,6 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@traceglass/core": "0.3.0"
+    "@traceglass/core": "0.4.0"
   }
 }

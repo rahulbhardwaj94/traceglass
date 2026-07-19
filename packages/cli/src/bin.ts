@@ -23,6 +23,8 @@ import {
   finalizeJournal,
   createEnvelope,
   parseEvidence,
+  parsePolicy,
+  evaluatePolicy,
   type Run,
   type SessionInfo,
 } from '@traceglass/core';
@@ -36,7 +38,7 @@ const program = new Command();
 program
   .name('traceglass')
   .description('Flight recorder & tamper-evident audit dashboard for autonomous agents')
-  .version('0.3.0');
+  .version('0.4.0');
 
 function openStore(): RunStore {
   return new RunStore(storePath());
@@ -241,16 +243,83 @@ program
     'Verify a stored run or a .tgev evidence file (chain + signature); exit 1 if tampered',
   )
   .argument('<runId-or-file>', 'id of a stored run, or path to an exported evidence file')
-  .action((arg: string) => {
+  .option('--json', 'machine-readable JSON output (for CI)')
+  .action((arg: string, opts: { json?: boolean }) => {
     const store = openStore();
     const run = loadRunOrEvidence(store, arg);
     const result = verifyRunFull(run);
-    console.log(result.chain.message);
-    console.log(result.signature.message);
-    console.log(`runHash: ${result.chain.storedRunHash}`);
-    if (!result.ok) {
+    if (opts.json) {
+      console.log(JSON.stringify({ runId: run.id, ...result }, null, 2));
+    } else {
+      console.log(result.chain.message);
+      console.log(result.signature.message);
+      console.log(`runHash: ${result.chain.storedRunHash}`);
       if (!result.chain.ok) console.log(`expected: ${result.chain.expectedRunHash}`);
-      process.exit(1);
+    }
+    store.close();
+    if (!result.ok) process.exit(1);
+  });
+
+program
+  .command('check')
+  .description(
+    'Check a stored run or .tgev file against a guardrail policy; exit 1 on any violation',
+  )
+  .argument('<runId-or-file>', 'id of a stored run, or path to an exported evidence file')
+  .requiredOption('-p, --policy <file>', 'policy JSON file (see README for the rule set)')
+  .option('--json', 'machine-readable JSON output (for CI)')
+  .action((arg: string, opts: { policy: string; json?: boolean }) => {
+    const store = openStore();
+    const run = loadRunOrEvidence(store, arg);
+    let policy;
+    try {
+      policy = parsePolicy(JSON.parse(readFileSync(resolve(opts.policy), 'utf8')));
+    } catch (e) {
+      return die(`Could not read policy ${opts.policy}: ${friendly(e)}`);
+    }
+    // A policy verdict is only meaningful over an authentic record, so
+    // integrity (chain + signature) is checked alongside the rules.
+    const integrity = verifyRunFull(run);
+    const result = evaluatePolicy(run, policy);
+    const ok = integrity.ok && result.ok;
+    if (opts.json) {
+      console.log(JSON.stringify({ runId: run.id, ok, integrity, policy: result }, null, 2));
+    } else {
+      console.log(integrity.chain.message);
+      console.log(integrity.signature.message);
+      const name = result.policyName ? ` "${result.policyName}"` : '';
+      if (result.ok) {
+        console.log(`Policy${name}: PASS — no violations.`);
+      } else {
+        console.log(`Policy${name}: FAIL — ${result.violations.length} violation(s):`);
+        for (const v of result.violations) {
+          console.log(`  ✗ [${v.rule}] ${v.message}`);
+        }
+      }
+    }
+    store.close();
+    if (!ok) process.exit(1);
+  });
+
+program
+  .command('search')
+  .description('Search every stored run for text in step labels, tools, and payloads')
+  .argument('<text>', 'text to find (case-insensitive)')
+  .option('--limit <n>', 'maximum hits to return', '50')
+  .option('--json', 'machine-readable JSON output')
+  .action((text: string, opts: { limit: string; json?: boolean }) => {
+    const store = openStore();
+    const hits = store.searchRuns(text, { limit: Number(opts.limit) || 50 });
+    if (opts.json) {
+      console.log(JSON.stringify(hits, null, 2));
+    } else if (hits.length === 0) {
+      console.log(`No steps matching "${text}".`);
+    } else {
+      for (const h of hits) {
+        console.log(`${h.runId}\tstep #${h.stepIndex} (${h.stepType})\t${h.label}`);
+        console.log(`  ${h.snippet}`);
+      }
+      console.log(`\n${hits.length} hit(s). Replay a run with: traceglass open --id <runId>`);
     }
     store.close();
   });

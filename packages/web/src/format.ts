@@ -11,7 +11,9 @@ export function durationLabel(ms: number): string {
 
 export function timeLabel(iso: string): string {
   const d = new Date(iso);
-  return d.toLocaleTimeString([], { hour12: false }) + '.' + String(d.getMilliseconds()).padStart(3, '0');
+  return (
+    d.toLocaleTimeString([], { hour12: false }) + '.' + String(d.getMilliseconds()).padStart(3, '0')
+  );
 }
 
 export function stepTypeLabel(type: StepType): string {
@@ -46,6 +48,7 @@ const TYPE_LABEL: Record<StepType, string> = {
   tool_call: 'Tool call',
   llm_reasoning: 'LLM reasoning',
   branch: 'Branch',
+  approval: 'Approval',
   final_output: 'Final output',
   error: 'Error',
 };
