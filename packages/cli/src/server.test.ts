@@ -127,6 +127,29 @@ describe('search API (v0.4)', () => {
   });
 });
 
+describe('live tail API (v0.7)', () => {
+  it('GET /api/live lists in-progress recordings', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/live' });
+    expect(res.statusCode).toBe(200);
+    expect(Array.isArray(res.json())).toBe(true);
+  });
+
+  it('GET /api/live/:id falls back to the stored run once finalized', async () => {
+    // No journal exists for this id, but it IS stored — the dashboard should
+    // seamlessly switch from live view to the sealed record.
+    const res = await app.inject({ method: 'GET', url: `/api/live/${run.id}` });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { live: boolean; runHash: string };
+    expect(body.live).toBe(false);
+    expect(body.runHash).toBe(run.runHash);
+  });
+
+  it('GET /api/live/:id 404s for an id that is neither live nor stored', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/live/ghost-run' });
+    expect(res.statusCode).toBe(404);
+  });
+});
+
 describe('serve mode: token auth + collector ingest (v0.3)', () => {
   const nativeBody = JSON.parse(
     readFileSync(join(fixturesDir, 'sample-run-native.json'), 'utf8'),

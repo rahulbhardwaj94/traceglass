@@ -21,6 +21,9 @@ import {
   verifyRunFull,
   readJournal,
   finalizeJournal,
+  listLiveRecordings,
+  findLiveRecording,
+  liveRunFromJournal,
   createEnvelope,
   parseEvidence,
   parsePolicy,
@@ -44,7 +47,7 @@ const program = new Command();
 program
   .name('traceglass')
   .description('Flight recorder & tamper-evident audit dashboard for autonomous agents')
-  .version('0.6.0');
+  .version('0.7.0');
 
 function openStore(): RunStore {
   return new RunStore(storePath());
@@ -432,6 +435,101 @@ program
     };
     process.on('SIGINT', shutdown);
     process.on('SIGTERM', shutdown);
+  });
+
+program
+  .command('tail')
+  .description('Watch a recording live as it happens — steps, cost, and warnings stream in')
+  .argument('[runId]', 'run to follow (default: the most recently active recording)')
+  .option('--interval <ms>', 'poll interval in milliseconds', '500')
+  .option('--list', 'list in-progress recordings and exit')
+  .action(async (runId: string | undefined, opts: { interval: string; list?: boolean }) => {
+    if (opts.list) {
+      const live = listLiveRecordings();
+      if (live.length === 0) {
+        console.log('No recordings in progress.');
+        return;
+      }
+      for (const r of live) {
+        console.log(`${r.runId}\t${r.steps} steps\t${r.updatedAt}\t${r.name}`);
+      }
+      return;
+    }
+
+    const initial = runId ? findLiveRecording(runId) : listLiveRecordings()[0];
+    if (!initial) {
+      return die(
+        runId
+          ? `No recording in progress with id "${runId}". Use \`traceglass tail --list\`.`
+          : 'No recordings in progress. Start one with the SDK, then tail it.',
+      );
+    }
+
+    const target = initial.runId;
+    console.log(`\n  ▸ tailing "${initial.name}" (${target})\n`);
+    let printed = 0;
+    let warned = new Set<string>();
+    const intervalMs = Math.max(100, Number(opts.interval) || 500);
+
+    const render = (): boolean => {
+      const live = findLiveRecording(target);
+      if (!live) {
+        // Journal gone: the run finalized and moved into the store.
+        const store = openStore();
+        const stored = store.getRun(target);
+        store.close();
+        if (stored) {
+          console.log(
+            `\n  ● run ${stored.status} — ${stored.totals.steps} steps, ${stored.currency} ${stored.totals.cost.toFixed(2)}, ${stored.totals.tokens} tokens`,
+          );
+          console.log(
+            `    anchor ${stored.runHash.slice(0, 16)}…${stored.signature ? ' · signed' : ''}`,
+          );
+          console.log(`    replay: traceglass open --id ${target}\n`);
+        } else {
+          console.log('\n  ● recording ended.\n');
+        }
+        return false;
+      }
+      let run;
+      try {
+        run = liveRunFromJournal(readJournal(live.file));
+      } catch {
+        return true; // mid-write; try again next tick
+      }
+      for (const step of run.steps.slice(printed)) {
+        const cost = step.cost > 0 ? ` ${run.currency} ${step.cost.toFixed(2)}` : '';
+        const tok = step.tokens > 0 ? ` ${step.tokens}tok` : '';
+        console.log(
+          `  ${String(step.index).padStart(3)} ${step.type.padEnd(14)} ${step.label}${cost}${tok}`,
+        );
+      }
+      printed = run.steps.length;
+      for (const w of run.warnings) {
+        const key = `${w.kind}:${w.stepIds.join(',')}`;
+        if (warned.has(key)) continue;
+        warned.add(key);
+        console.log(`  ⚠ ${w.kind.toUpperCase()}: ${w.message}`);
+      }
+      return true;
+    };
+
+    render();
+    await new Promise<void>((resolve) => {
+      const timer = setInterval(() => {
+        if (!render()) {
+          clearInterval(timer);
+          resolve();
+        }
+      }, intervalMs);
+      const stop = () => {
+        clearInterval(timer);
+        console.log('\n  (stopped tailing; the recording continues)\n');
+        resolve();
+      };
+      process.on('SIGINT', stop);
+      process.on('SIGTERM', stop);
+    });
   });
 
 program

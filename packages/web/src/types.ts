@@ -52,7 +52,9 @@ export interface Run {
   name: string;
   startedAt: string;
   endedAt: string;
-  status: 'completed' | 'failed';
+  status: 'completed' | 'failed' | 'running';
+  /** Present on live (in-progress) runs served from /api/live. */
+  live?: boolean;
   currency: string;
   totals: RunTotals;
   warnings: Warning[];

@@ -72,12 +72,18 @@ export interface RecordStepInput {
   startedAt?: string;
 }
 
+/** A terminal run status — `running` only ever describes an in-flight journal. */
+export type SettledStatus = Exclude<RunStatus, 'running'>;
+
 export interface Recorder {
   readonly runId: string;
   /** Record one step: hashed into the chain and journaled before returning. */
   step(input: RecordStepInput): Step;
-  /** Finalize: totals + warnings + anchor, sign if keys exist, save, clean up. */
-  end(opts?: { status?: RunStatus }): Promise<Run>;
+  /**
+   * Finalize: totals + warnings + anchor, sign if keys exist, save, clean up.
+   * `running` is not a legal terminal status — a run being ended is settled.
+   */
+  end(opts?: { status?: SettledStatus }): Promise<Run>;
 }
 
 function defaultDir(): string {
@@ -170,7 +176,7 @@ export function startRecording(opts: StartRecordingOptions): Recorder {
       return step;
     },
 
-    async end(endOpts: { status?: RunStatus } = {}): Promise<Run> {
+    async end(endOpts: { status?: SettledStatus } = {}): Promise<Run> {
       if (ended) throw new Error(`Recording "${runId}" has already ended.`);
       ended = true;
       if (steps.length === 0) throw new Error('Cannot end a recording with no steps.');

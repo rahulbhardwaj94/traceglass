@@ -16,6 +16,10 @@ import {
   ingestClaudeCodeAndFinalize,
   ingestOtel,
   finalizeRun,
+  listLiveRecordings,
+  findLiveRecording,
+  liveRunFromJournal,
+  readJournal,
   type Run,
 } from '@traceglass/core';
 
@@ -137,6 +141,25 @@ export function buildServer(store: RunStore, opts: ServerOptions = {}): FastifyI
       .header('content-type', 'text/html; charset=utf-8')
       .header('content-disposition', `attachment; filename="traceglass-${run.id}.html"`)
       .send(html);
+  });
+
+  // Live tail (v0.7): in-progress recordings, reconstructed from their journals.
+  app.get('/api/live', async () => listLiveRecordings());
+
+  app.get<{ Params: { id: string } }>('/api/live/:id', async (req, reply) => {
+    const live = findLiveRecording(req.params.id);
+    if (!live) {
+      // Already finalized? Hand back the stored run so the dashboard can
+      // seamlessly switch from live view to the sealed record.
+      const stored = store.getRun(req.params.id);
+      if (stored) return { ...stored, live: false };
+      return reply.code(404).send({ error: 'no live recording with that id' });
+    }
+    try {
+      return { ...liveRunFromJournal(readJournal(live.file)), live: true };
+    } catch {
+      return reply.code(503).send({ error: 'journal is mid-write; retry' });
+    }
   });
 
   // Cross-run step search (v0.4): ?q=<text>&limit=<n>

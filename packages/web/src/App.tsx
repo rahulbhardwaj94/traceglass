@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Run, VerifyResult } from './types.js';
-import { api, runIdFromUrl, pickerFromUrl } from './api.js';
+import { api, runIdFromUrl, pickerFromUrl, liveIdFromUrl } from './api.js';
 import { clockOf } from './format.js';
 import { indexStepsById, loopStepIdSet, medianNonZeroCost } from './lib/derive.js';
 import { Icon } from './components/Icon.js';
@@ -14,6 +14,7 @@ import { Warnings } from './components/Warnings.js';
 import { SessionPicker } from './components/SessionPicker.js';
 
 const PLAY_INTERVAL_MS = 700;
+const LIVE_POLL_MS = 800;
 
 export function App() {
   const [run, setRun] = useState<Run | null>(null);
@@ -24,11 +25,54 @@ export function App() {
 
   // With no run id in the URL, show the session picker landing screen.
   const runId = runIdFromUrl();
-  const showPicker = pickerFromUrl() || !runId;
+  const liveId = liveIdFromUrl();
+  const showPicker = pickerFromUrl() || (!runId && !liveId);
 
-  // Load the run + verification once on mount (skipped in picker mode).
+  /*
+   * Tail mode (v0.7): poll the in-progress recording's journal and follow the
+   * newest step, until the run finalizes (the server then returns the stored
+   * record with live:false and polling stops).
+   */
   useEffect(() => {
-    if (showPicker || !runId) return;
+    if (showPicker || !liveId) return;
+    let cancelled = false;
+    let timer = 0;
+    const tick = async () => {
+      try {
+        const r = await api.liveRun(liveId);
+        if (cancelled) return;
+        setRun((prev) => {
+          // Auto-follow the newest step while it is still recording.
+          if (r.live !== false && r.steps.length > (prev?.steps.length ?? 0)) {
+            setSelected(Math.max(0, r.steps.length - 1));
+          }
+          return r;
+        });
+        if (r.live === false) {
+          // Finalized: fetch verification once and stop polling.
+          try {
+            const v = await api.verify(liveId);
+            if (!cancelled) setVerify(v);
+          } catch {
+            /* verification is best-effort here */
+          }
+          return;
+        }
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+      }
+      if (!cancelled) timer = window.setTimeout(tick, LIVE_POLL_MS);
+    };
+    void tick();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [showPicker, liveId]);
+
+  // Load the run + verification once on mount (skipped in picker/live mode).
+  useEffect(() => {
+    if (showPicker || liveId || !runId) return;
     let cancelled = false;
     (async () => {
       try {
@@ -43,7 +87,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [showPicker, runId]);
+  }, [showPicker, liveId, runId]);
 
   const select = useCallback((index: number) => setSelected(index), []);
 
@@ -125,7 +169,11 @@ export function App() {
           <span className="dot" />
           <span className={'runstatus ' + run.status}>
             <span className="rs-led" />
-            {run.status === 'failed' ? 'Run failed' : 'Run completed'}
+            {run.status === 'running'
+              ? 'Recording…'
+              : run.status === 'failed'
+                ? 'Run failed'
+                : 'Run completed'}
           </span>
         </div>
 

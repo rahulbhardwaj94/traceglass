@@ -40,6 +40,40 @@ traceglass turns an agent trace into that record:
 - **Replayable** — step through the run on a timeline; watch cost and tokens climb; jump straight to the loop or the error.
 - **Tamper-evident** — every step is hash-chained (SHA-256, each step over the previous). Change one field in storage and the dashboard turns **red** and names the first broken step.
 - **Compliance-first** — each step surfaces the data it **read** or **mutated**, so "what did the agent see and change?" is answerable at a glance.
+
+## Tail mode: watch a run while it happens (v0.7)
+
+Everything above is forensics — after the fact. `traceglass tail` makes it
+monitoring. Because the SDK appends each step to a journal *the moment it
+happens*, the live stream already exists on disk; tail just follows it.
+
+```console
+$ traceglass tail
+  ▸ tailing "live collections agent" (tail-1)
+
+    0 user_input     Dun account 4471
+    1 tool_call      Tool: get_payment_status INR 4.70 800tok
+    2 tool_call      Tool: get_payment_status INR 4.70 800tok
+    3 tool_call      Tool: get_payment_status INR 4.70 800tok
+  ⚠ LOOP: Tool "get_payment_status" was called 3x in a row with identical input
+    — likely a stuck loop burning tokens/cost.
+
+  ● run completed — 5 steps, INR 14.10, 2400 tokens
+    anchor 93b46ccf65ded070… · signed
+```
+
+The loop warning fires **mid-flight** — you see the agent burning money while
+it is still burning it, not in tomorrow's audit. `traceglass tail --list` shows
+what is currently recording.
+
+The dashboard does the same: open `/?live=<runId>` and it polls the journal,
+auto-following the newest step with a pulsing **Recording…** indicator, then
+switches seamlessly to the sealed, signed record the moment the run finalizes.
+A live run reports `status: "running"` with an empty `runHash` — the chain is
+real up to the latest step, but the record is not yet anchored or signed.
+
+Two endpoints back it: `GET /api/live` (what is recording now) and
+`GET /api/live/:id` (the in-flight run, or the stored record once finalized).
 - **Cost- and loop-aware** — automatic detection of stuck tool loops and steps that cost far more than the run's norm.
 
 ## Local-first — your data never leaves your machine
@@ -99,6 +133,9 @@ npx traceglass watch --policy policy.json --anchor
 
 # Irreversibly remove PII — the chain and signature still verify afterwards
 npx traceglass redact <runId> --path input.ssn --pattern email --reason "erasure request" --yes
+
+# Watch a run LIVE as it happens — steps, cost, and warnings stream in
+npx traceglass tail
 ```
 
 The `open` command always prints the dashboard URL, so it works over SSH or in
@@ -310,7 +347,7 @@ This is an npm-workspaces monorepo (Node ≥20, TypeScript, ESM):
 ```bash
 npm install
 npm run build
-npm test                    # 150+ tests across ingest, analysis, integrity, signing, redaction, policy, store, sdk, server, e2e
+npm test                    # 160+ tests across ingest, analysis, integrity, signing, redaction, policy, store, sdk, server, e2e
 node scripts/e2e-check.mjs  # outcome check against the real built CLI
 ```
 

@@ -1197,3 +1197,21 @@ body.grabbing * {
   color: var(--accent);
   font-weight: 700;
 }
+
+/* Live (in-progress) recording — tail mode (v0.7). */
+.runstatus.running {
+  color: var(--warn, #e0a33e);
+}
+.runstatus.running .rs-led {
+  background: var(--warn, #e0a33e);
+  animation: tg-pulse 1.2s ease-in-out infinite;
+}
+@keyframes tg-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}

@@ -243,6 +243,44 @@ check('search finds the account across stored runs', () => {
   assert(output.includes('hit(s)'), 'no hit summary');
 });
 
+// 14b. tail: a recording is visible LIVE, mid-flight
+check('tail sees an in-progress recording and its warnings before it ends', () => {
+  const tailHome = join(out, 'tail-home');
+  mkdirSync(tailHome, { recursive: true });
+  cli(['keygen'], { home: tailHome });
+  const agent = join(out, 'slow-agent.mjs');
+  writeFileSync(
+    agent,
+    `import { startRecording } from ${JSON.stringify(sdk)};
+     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+     const rec = startRecording({ name: 'slow agent', id: 'tail-run' });
+     rec.step({ type: 'user_input', label: 'start' });
+     for (let i = 0; i < 3; i++) {
+       rec.step({ type: 'tool_call', toolName: 'get_status', label: 'Tool: get_status', cost: 1 });
+       await sleep(400);
+     }
+     await rec.end();`,
+  );
+  const proc = spawn('node', [agent], {
+    env: { ...process.env, TRACEGLASS_HOME: tailHome },
+    stdio: 'ignore',
+  });
+  try {
+    // Give the agent time to emit a couple of steps, then look while it runs.
+    execFileSync('node', ['-e', 'setTimeout(()=>{},700)'], { encoding: 'utf8' });
+    const listed = cli(['tail', '--list'], { home: tailHome });
+    assert(/tail-run/.test(listed), `live recording not listed: ${listed}`);
+
+    // Follow it to completion; the loop warning must appear mid-flight.
+    const tailed = cli(['tail', 'tail-run', '--interval', '150'], { home: tailHome });
+    assert(/LOOP/.test(tailed), `loop warning never fired live: ${tailed}`);
+    assert(/run completed/.test(tailed), `no finalize handoff: ${tailed}`);
+    assert(/signed/.test(tailed), `finalized run not signed: ${tailed}`);
+  } finally {
+    proc.kill('SIGTERM');
+  }
+});
+
 // 15a. redaction: PII destroyed, anchor + signature survive
 check('redact removes PII while the anchor and signature stay valid', () => {
   const redactHome = join(out, 'redact-home');

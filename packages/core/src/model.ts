@@ -79,7 +79,12 @@ export const WarningSchema = z.object({
 });
 export type Warning = z.infer<typeof WarningSchema>;
 
-export const RunStatusSchema = z.enum(['completed', 'failed']);
+/**
+ * `running` (v0.7) marks a recording still in progress — reconstructed live
+ * from its journal, chain sealed only up to the latest step, runHash still
+ * empty. Finalized records are only ever completed/failed.
+ */
+export const RunStatusSchema = z.enum(['completed', 'failed', 'running']);
 export type RunStatus = z.infer<typeof RunStatusSchema>;
 
 /**

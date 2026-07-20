@@ -18,6 +18,7 @@ export const api = {
   verify: (id: string) => getJson<VerifyResult>(`/api/runs/${encodeURIComponent(id)}/verify`),
   reportUrl: (id: string) => `/api/runs/${encodeURIComponent(id)}/report`,
   listSessions: () => getJson<SessionInfo[]>('/api/sessions'),
+  liveRun: (id: string) => getJson<Run>(`/api/live/${encodeURIComponent(id)}`),
   ingestSession: (id: string) =>
     postJson<{ runId: string }>(`/api/sessions/${encodeURIComponent(id)}/ingest`),
 };
@@ -25,6 +26,11 @@ export const api = {
 /** Read the run id from the URL (?run=<id>). */
 export function runIdFromUrl(): string | null {
   return new URLSearchParams(window.location.search).get('run');
+}
+
+/** Read the live run id from the URL (?live=<id>) — tail mode (v0.7). */
+export function liveIdFromUrl(): string | null {
+  return new URLSearchParams(window.location.search).get('live');
 }
 
 /** True when the URL requests the session-picker landing screen (?picker=1). */
