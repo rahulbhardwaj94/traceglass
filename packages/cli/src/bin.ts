@@ -25,6 +25,10 @@ import {
   parseEvidence,
   parsePolicy,
   evaluatePolicy,
+  redactRun,
+  redactLegacyRun,
+  patternsByName,
+  DEFAULT_PATTERNS,
   type Policy,
   type Run,
   type SessionInfo,
@@ -40,7 +44,7 @@ const program = new Command();
 program
   .name('traceglass')
   .description('Flight recorder & tamper-evident audit dashboard for autonomous agents')
-  .version('0.5.0');
+  .version('0.6.0');
 
 function openStore(): RunStore {
   return new RunStore(storePath());
@@ -554,6 +558,139 @@ program
     console.log(`Public key: ${result.publicKeyFile}`);
     console.log('New runs will be signed at ingest. The private key stays local (mode 0600).');
   });
+
+program
+  .command('redact')
+  .description(
+    'Irreversibly remove sensitive values from a stored run — the hash chain and signature still verify',
+  )
+  .argument('<runId>', 'id of a stored run')
+  .option('--path <path...>', 'leaf path(s) to remove, e.g. "input.ssn" or "<stepId>#input.ssn"')
+  .option(
+    '--pattern <name...>',
+    `built-in detector(s): ${DEFAULT_PATTERNS.map((p) => p.name).join(', ')}`,
+  )
+  .option('--reason <text>', 'recorded in the redaction audit trail')
+  .option('--legacy', 're-chain + re-sign a pre-0.6 run (weaker guarantee — see docs)')
+  .option('--yes', 'actually perform the redaction (without this, it is a dry run)')
+  .option('--json', 'machine-readable output')
+  .action(
+    (
+      runId: string,
+      opts: {
+        path?: string[];
+        pattern?: string[];
+        reason?: string;
+        legacy?: boolean;
+        yes?: boolean;
+        json?: boolean;
+      },
+    ) => {
+      const store = openStore();
+      const run = store.getRun(runId);
+      if (!run) return die(`No stored run with id "${runId}".`);
+      if (!opts.path && !opts.pattern) {
+        return die('Nothing to redact — pass --path and/or --pattern.');
+      }
+      let patterns;
+      try {
+        patterns = opts.pattern ? patternsByName(opts.pattern) : undefined;
+      } catch (e) {
+        return die(friendly(e));
+      }
+
+      const redactOpts = {
+        ...(opts.path ? { paths: opts.path } : {}),
+        ...(patterns ? { patterns } : {}),
+        ...(opts.reason !== undefined ? { reason: opts.reason } : {}),
+      };
+
+      let result;
+      let previousRunHash: string | undefined;
+      try {
+        if (opts.legacy) {
+          const legacy = redactLegacyRun(run, redactOpts);
+          result = legacy;
+          previousRunHash = legacy.previousRunHash;
+        } else {
+          result = redactRun(run, redactOpts);
+        }
+      } catch (e) {
+        return die(friendly(e));
+      }
+
+      if (result.redacted.length === 0) {
+        const uncommitted = !opts.legacy && run.steps.some((s) => !s.commitments);
+        console.log(
+          uncommitted
+            ? `Nothing removed — this run was recorded before v0.6 and carries no commitments.\n  Re-run with --legacy to redact it by re-chaining and re-signing (weaker guarantee:\n  the anchor changes, so the original values can no longer be proven).`
+            : 'Nothing matched — no values removed.',
+        );
+        store.close();
+        return;
+      }
+
+      // Legacy re-chaining invalidates the old signature; re-sign the new chain.
+      let finalRun = result.run;
+      if (opts.legacy) finalRun = maybeSign({ ...finalRun, signature: undefined } as Run);
+
+      const integrity = verifyRunFull(finalRun);
+
+      if (opts.json) {
+        console.log(
+          JSON.stringify(
+            {
+              runId,
+              dryRun: !opts.yes,
+              legacy: Boolean(opts.legacy),
+              redacted: result.redacted,
+              runHashUnchanged: !opts.legacy && finalRun.runHash === run.runHash,
+              ...(previousRunHash ? { previousRunHash, newRunHash: finalRun.runHash } : {}),
+              integrity,
+            },
+            null,
+            2,
+          ),
+        );
+      } else {
+        console.log(
+          `${opts.yes ? 'Redacted' : 'DRY RUN — would redact'} ${result.redacted.length} value(s):`,
+        );
+        for (const path of result.redacted) console.log(`  - ${path}`);
+        if (opts.legacy) {
+          console.log(
+            `\n  ! Legacy mode: this run was re-chained and re-signed.\n    anchor ${previousRunHash} -> ${finalRun.runHash}\n    A verifier can confirm the redacted record is intact and signed,\n    but can no longer prove what the original values were.`,
+          );
+        } else {
+          console.log(
+            `\n  Integrity anchor UNCHANGED (${finalRun.runHash.slice(0, 16)}…) — the chain and signature still verify.`,
+          );
+        }
+        console.log(`  ${integrity.chain.message}`);
+        console.log(`  ${integrity.signature.message}`);
+        if (!opts.yes) console.log('\n  Re-run with --yes to apply. This cannot be undone.');
+      }
+
+      if (opts.yes) {
+        if (!integrity.ok) {
+          return die('Refusing to save: the redacted run does not verify. Nothing was changed.');
+        }
+        store.replaceRedacted(finalRun);
+        appendFileSync(
+          join(dataDir(), 'audit.jsonl'),
+          JSON.stringify({
+            reason: 'redaction',
+            runId,
+            legacy: Boolean(opts.legacy),
+            paths: result.redacted,
+            note: opts.reason,
+            at: new Date().toISOString(),
+          }) + '\n',
+        );
+      }
+      store.close();
+    },
+  );
 
 program
   .command('export')

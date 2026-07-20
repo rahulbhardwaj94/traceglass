@@ -1,6 +1,6 @@
 {
   "name": "@traceglass/core",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Core engine for traceglass: model, ingest, analyze, integrity, store, report",
   "type": "module",
   "main": "./dist/index.js",

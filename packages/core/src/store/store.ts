@@ -159,6 +159,31 @@ export class RunStore {
   }
 
   /**
+   * Redaction: overwrite a stored run with a redacted version of ITSELF.
+   *
+   * This is the only update path in the store, and it exists because erasure
+   * requests require destroying data in place — leaving the original on disk
+   * would defeat the purpose. It is deliberately narrow: the id must match an
+   * existing run, and the caller must audit-log the result. Everything else
+   * about the store stays append-only.
+   */
+  replaceRedacted(run: Run): void {
+    const validated = RunSchema.parse(run);
+    const existing = this.getRun(validated.id);
+    if (!existing) {
+      throw new Error(`Cannot redact "${validated.id}": no such run.`);
+    }
+    this.db
+      .prepare(`UPDATE runs SET data = @data, run_hash = @runHash, cost = @cost WHERE id = @id`)
+      .run({
+        id: validated.id,
+        data: JSON.stringify(validated),
+        runHash: validated.runHash,
+        cost: validated.totals.cost,
+      });
+  }
+
+  /**
    * Retention: delete whole runs ingested before the cutoff and return what
    * was removed so the caller can audit-log it. This is the only delete path.
    */

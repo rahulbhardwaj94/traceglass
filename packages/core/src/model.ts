@@ -20,6 +20,19 @@ export const StepTypeSchema = z.enum([
 ]);
 export type StepType = z.infer<typeof StepTypeSchema>;
 
+/**
+ * One redaction event on a step: which leaf was destroyed, when, and why.
+ * Kept OUT of the hash — redacting must not change the step hash (v0.6).
+ */
+export const RedactionRecordSchema = z.object({
+  path: z.string().min(1), // e.g. "input.ssn"
+  at: z.string(), // ISO 8601
+  reason: z.string().optional(),
+  /** 'pattern' for automatic capture-time rules, 'manual' for an operator action. */
+  by: z.enum(['pattern', 'manual']).optional(),
+});
+export type RedactionRecord = z.infer<typeof RedactionRecordSchema>;
+
 export const StepSchema = z.object({
   id: z.string().min(1), // stable unique id
   runId: z.string().min(1),
@@ -38,6 +51,13 @@ export const StepSchema = z.object({
   parentSpanId: z.string().optional(), // for reconstructing the tree
   hash: z.string(), // sha256 of canonicalized step content + prevHash (§6)
   prevHash: z.string(), // hash of previous step; '' for index 0
+  // --- v0.6 redaction (all optional; absent on pre-0.6 records) ---
+  /** path -> sha256(salt + value) for each payload leaf; HASHED in place of raw values. */
+  commitments: z.record(z.string()).optional(),
+  /** path -> salt. A path missing here whose commitment exists has been redacted. NOT hashed. */
+  salts: z.record(z.string()).optional(),
+  /** Audit trail of what was removed and why. NOT hashed (it grows on redaction). */
+  redactions: z.array(RedactionRecordSchema).optional(),
 });
 export type Step = z.infer<typeof StepSchema>;
 

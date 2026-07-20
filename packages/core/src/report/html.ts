@@ -104,6 +104,21 @@ function renderCompliance(run: Run): string {
           )
           .join('\n')}</table>`;
 
+  const redactions = run.steps.flatMap((s) =>
+    (s.redactions ?? []).map((r) => ({ step: s.index, ...r })),
+  );
+  const redactionRows =
+    redactions.length === 0
+      ? `<p class="muted">No values were redacted from this record.</p>`
+      : `<table class="kv">${redactions
+          .map(
+            (r) =>
+              `<tr><th>#${r.step} <span class="mono">${esc(r.path)}</span></th><td>${esc(r.reason ?? 'redacted')} &middot; ${esc(r.by ?? 'manual')} &middot; <span class="mono">${esc(r.at)}</span></td></tr>`,
+          )
+          .join('\n')}</table>
+      <p class="muted">Redacted values were destroyed along with their salts and cannot be
+      recovered. The integrity anchor above is unchanged, so this record still verifies.</p>`;
+
   return `<section>
   <h2>Compliance summary</h2>
   <table class="kv">
@@ -111,9 +126,12 @@ function renderCompliance(run: Run): string {
     <tr><th>Event log completeness</th><td>${run.totals.steps} hash-chained steps; anchor <span class="mono break">${esc(run.runHash)}</span></td></tr>
     <tr><th>Human oversight</th><td>${approvals.length} approval step(s) recorded</td></tr>
     <tr><th>Data touched</th><td>${touched.length} step(s) read or mutated data</td></tr>
+    <tr><th>Data minimisation</th><td>${redactions.length} value(s) redacted</td></tr>
   </table>
   <h3>Approvals</h3>
   ${approvalRows}
+  <h3>Redactions</h3>
+  ${redactionRows}
   <h3>Data read / mutated</h3>
   ${touchedRows}
 </section>`;

@@ -66,6 +66,15 @@ describe('RunStore (acceptance §M2)', () => {
     expect(store.searchRuns('a', { limit: 3 }).length).toBeLessThanOrEqual(3);
   });
 
+  it('replaceRedacted overwrites in place and refuses unknown ids (v0.6)', () => {
+    store.saveRun(run);
+    const redacted = { ...run, name: 'redacted copy' };
+    store.replaceRedacted(redacted);
+    expect(store.getRun(run.id)!.name).toBe('redacted copy');
+    expect(store.listRuns()).toHaveLength(1); // in place, not an extra row
+    expect(() => store.replaceRedacted({ ...run, id: 'ghost' })).toThrow(/no such run/);
+  });
+
   it('pruneOlderThan deletes only runs ingested before the cutoff and reports them', () => {
     store.saveRun(run);
     store.saveRun({ ...run, id: 'old-run' });

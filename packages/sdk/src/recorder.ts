@@ -6,8 +6,11 @@ import {
   JOURNAL_FORMAT_VERSION,
   RunStore,
   analyzeRun,
+  buildCommitments,
   hashStep,
   journalLine,
+  patternsByName,
+  scrubStepPayload,
   signRun,
   verifyRun,
   type Run,
@@ -41,6 +44,19 @@ export interface StartRecordingOptions {
    * (no journal, no store — end() just returns the finalized Run).
    */
   dir?: string | null;
+  /**
+   * Record per-leaf commitments so payload values can be redacted later
+   * WITHOUT breaking the hash chain (v0.6). On by default — it is what makes
+   * `traceglass redact` possible. Set false for the pre-0.6 hashing behaviour.
+   */
+  redactable?: boolean;
+  /**
+   * Names of built-in patterns (email, credit-card, ssn, aadhaar,
+   * private-key, bearer-token) to scrub at CAPTURE time. Matching values are
+   * replaced before anything is hashed or written, so the original never
+   * reaches disk.
+   */
+  redactPatterns?: string[];
 }
 
 export interface RecordStepInput {
@@ -89,6 +105,8 @@ export function startRecording(opts: StartRecordingOptions): Recorder {
   const steps: Step[] = [];
   let prevHash = '';
   let ended = false;
+  const redactable = opts.redactable !== false; // on by default (v0.6)
+  const patterns = opts.redactPatterns ? patternsByName(opts.redactPatterns) : [];
 
   const journalFile = dir ? join(dir, 'journal', `${runId}.jsonl`) : null;
   if (journalFile) {
@@ -112,6 +130,21 @@ export function startRecording(opts: StartRecordingOptions): Recorder {
     step(input: RecordStepInput): Step {
       if (ended) throw new Error(`Recording "${runId}" has already ended.`);
       const index = steps.length;
+
+      // Capture-time pattern scrubbing runs BEFORE commitments/hashing, so a
+      // matched value is never committed to and never written anywhere.
+      let payload: { input?: unknown; output?: unknown; dataPayload?: unknown } = {
+        ...(input.input !== undefined ? { input: input.input } : {}),
+        ...(input.output !== undefined ? { output: input.output } : {}),
+        ...(input.dataPayload !== undefined ? { dataPayload: input.dataPayload } : {}),
+      };
+      let redactions: Step['redactions'];
+      if (patterns.length > 0) {
+        const scrubbed = scrubStepPayload(payload, patterns);
+        payload = scrubbed.payload;
+        if (scrubbed.redactions.length > 0) redactions = scrubbed.redactions;
+      }
+
       const step: Step = {
         id: `${runId}:${index}`,
         runId,
@@ -123,12 +156,12 @@ export function startRecording(opts: StartRecordingOptions): Recorder {
         tokens: input.tokens ?? 0,
         cost: input.cost ?? 0,
         ...(input.toolName !== undefined ? { toolName: input.toolName } : {}),
-        ...(input.input !== undefined ? { input: input.input } : {}),
-        ...(input.output !== undefined ? { output: input.output } : {}),
-        ...(input.dataPayload !== undefined ? { dataPayload: input.dataPayload } : {}),
+        ...payload,
         spanId: randomBytes(8).toString('hex'),
         hash: '',
         prevHash,
+        ...(redactable ? buildCommitments(payload) : {}),
+        ...(redactions !== undefined ? { redactions } : {}),
       };
       step.hash = hashStep(step, prevHash);
       prevHash = step.hash;

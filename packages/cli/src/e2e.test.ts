@@ -14,6 +14,8 @@ import {
   ingestAndFinalize,
   parseEvidence,
   parsePolicy,
+  patternsByName,
+  redactRun,
   readJournal,
   verifyRun,
   verifyRunFull,
@@ -233,6 +235,72 @@ describe('v0.3 outcome test', () => {
     expect(recovered.status).toBe('failed');
     expect(recovered.totals.steps).toBe(2);
     expect(verifyRun(recovered).ok).toBe(true);
+  });
+
+  it('11. redaction destroys PII while the chain AND signature still verify (v0.6)', async () => {
+    const rec = startRecording({ name: 'pii agent', dir: home, id: 'e2e-pii' });
+    rec.step({
+      type: 'user_input',
+      label: 'Lookup customer',
+      input: { ssn: '123-45-6789', account: '4471', note: 'keep me' },
+    });
+    rec.step({
+      type: 'tool_call',
+      toolName: 'crm',
+      label: 'Tool: crm',
+      output: { email: 'jane@example.com' },
+      dataPayload: { read: 'customer' },
+    });
+    const original = await rec.end();
+    expect(original.signature).toBeDefined();
+    expect(verifyRunFull(original).ok).toBe(true);
+
+    const { run: redacted, redacted: paths } = redactRun(original, {
+      paths: ['input.ssn'],
+      patterns: patternsByName(['email']),
+      reason: 'GDPR erasure',
+    });
+    expect(paths.sort()).toEqual(['e2e-pii:0#input.ssn', 'e2e-pii:1#output.email']);
+
+    // THE CRUX: anchor unchanged, so the ORIGINAL signature still validates.
+    expect(redacted.runHash).toBe(original.runHash);
+    const check = verifyRunFull(redacted);
+    expect(check.chain.ok).toBe(true);
+    expect(check.signature.ok).toBe(true);
+
+    // The values are genuinely gone; siblings survive.
+    const serialized = JSON.stringify(redacted);
+    expect(serialized).not.toContain('123-45-6789');
+    expect(serialized).not.toContain('jane@example.com');
+    expect(serialized).toContain('keep me');
+    expect(serialized).toContain('4471');
+
+    // Persisting it destroys the original on disk.
+    const store = new RunStore(join(home, 'traceglass.sqlite'));
+    store.replaceRedacted(redacted);
+    const reloaded = store.getRun('e2e-pii')!;
+    store.close();
+    expect(JSON.stringify(reloaded)).not.toContain('123-45-6789');
+    expect(verifyRunFull(reloaded).ok).toBe(true);
+    expect(reloaded.steps[0]!.redactions![0]!.reason).toBe('GDPR erasure');
+  });
+
+  it('12. SECURITY: payload tampering on a committed run is still detected (v0.6)', () => {
+    const store = new RunStore(join(home, 'traceglass.sqlite'));
+    const run = store.getRun('e2e-pii')!;
+    store.close();
+    // Editing a raw value cannot move the hash (it covers commitments), so the
+    // commitment check is the only thing standing between us and silent edits.
+    const tampered: Run = {
+      ...run,
+      steps: run.steps.map((s, i) =>
+        i === 0 ? { ...s, input: { ...(s.input as object), account: '9999' } } : s,
+      ),
+    };
+    expect(tampered.steps[0]!.hash).toBe(run.steps[0]!.hash); // chain looks fine
+    const result = verifyRun(tampered);
+    expect(result.ok).toBe(false); // but verification still catches it
+    expect(result.message).toContain('input.account');
   });
 
   it('10. approval-gated policy: pass with approval, fail without, search finds the account (v0.4)', async () => {

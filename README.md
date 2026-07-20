@@ -96,6 +96,9 @@ npx traceglass search "4471"
 
 # Auto-record every finished Claude Code session as signed, policy-checked evidence
 npx traceglass watch --policy policy.json --anchor
+
+# Irreversibly remove PII — the chain and signature still verify afterwards
+npx traceglass redact <runId> --path input.ssn --pattern email --reason "erasure request" --yes
 ```
 
 The `open` command always prints the dashboard URL, so it works over SSH or in
@@ -248,6 +251,45 @@ reached for the network gets flagged the moment its session ends." Run
 `traceglass watch --once` from cron or CI instead of the daemon — it exits 1
 if any new session violated policy. Nothing leaves the machine either way.
 
+## Redaction: erase the data, keep the proof (v0.6)
+
+GDPR says minimise and delete; EU AI Act Article 12 says keep a complete,
+tamper-evident log. Those pull in opposite directions — deleting a value from a
+hash-chained record normally destroys the chain. traceglass resolves it.
+
+Every payload leaf is committed to at capture time with a salted hash, and the
+**step hash covers those commitments rather than the raw values**. Redacting a
+leaf therefore destroys the value and its salt while leaving the hash — and the
+signature — untouched:
+
+```bash
+npx traceglass redact <runId> --path input.ssn --pattern email --reason "erasure request"
+#   dry run by default: shows exactly what would go
+npx traceglass redact <runId> --path input.ssn --yes
+#   Redacted 2 value(s)
+#   Integrity anchor UNCHANGED (6e7ba959…) — the chain and signature still verify.
+```
+
+- **The value is genuinely gone.** Destroying the salt is what makes it
+  irreversible: without it, a low-entropy value (an SSN, a boolean) could be
+  brute-forced straight out of its commitment.
+- **Siblings stay verifiable.** Redacting `input.ssn` leaves `input.account`
+  independently checkable against its own commitment.
+- **Tampering is still caught.** Because raw values no longer move the hash,
+  verification checks every visible leaf against its commitment — edit one and
+  `verify` fails, naming the exact path.
+- **Auto-scrub at capture.** `startRecording({ redactPatterns: ['email','ssn'] })`
+  replaces matches *before* anything is hashed or written, so the original never
+  reaches disk. Built-in detectors: email, credit-card, ssn, aadhaar,
+  private-key, bearer-token.
+- **Pre-0.6 records** hashed raw values and can't be redacted this way. They
+  have an explicit `--legacy` path that re-chains and re-signs — the report and
+  CLI both state plainly that this yields a *new* anchor and a weaker guarantee.
+
+The audit report discloses every redaction (path, reason, who, when) under
+**Data minimisation**, so "what was removed, and is this record still intact?"
+is answerable at a glance.
+
 ```bash
 docker build -t traceglass .
 docker run -p 127.0.0.1:4318:4318 -v traceglass-data:/data \
@@ -268,7 +310,7 @@ This is an npm-workspaces monorepo (Node ≥20, TypeScript, ESM):
 ```bash
 npm install
 npm run build
-npm test                    # 100+ tests across ingest, analysis, integrity, signing, policy, store, sdk, server, e2e
+npm test                    # 150+ tests across ingest, analysis, integrity, signing, redaction, policy, store, sdk, server, e2e
 node scripts/e2e-check.mjs  # outcome check against the real built CLI
 ```
 

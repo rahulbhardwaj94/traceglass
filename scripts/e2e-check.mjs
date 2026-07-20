@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * v0.3 outcome check — exercises the REAL built CLI end-to-end in throwaway
+ * traceglass outcome check — exercises the REAL built CLI end-to-end in throwaway
  * homes. Run after `npm run build`:
  *
  *   node scripts/e2e-check.mjs
@@ -243,7 +243,58 @@ check('search finds the account across stored runs', () => {
   assert(output.includes('hit(s)'), 'no hit summary');
 });
 
-// 15. watch --once: auto-record a Claude Code session as signed evidence
+// 15a. redaction: PII destroyed, anchor + signature survive
+check('redact removes PII while the anchor and signature stay valid', () => {
+  const redactHome = join(out, 'redact-home');
+  mkdirSync(redactHome, { recursive: true });
+  cli(['keygen'], { home: redactHome });
+  const recFile = join(out, 'record-pii.mjs');
+  writeFileSync(
+    recFile,
+    `import { startRecording } from ${JSON.stringify(sdk)};
+     const rec = startRecording({ name: 'pii', id: 'pii-run' });
+     rec.step({ type: 'user_input', label: 'Lookup', input: { ssn: '123-45-6789', keep: 'visible' } });
+     await rec.end();`,
+  );
+  execFileSync('node', [recFile], {
+    encoding: 'utf8',
+    env: { ...process.env, TRACEGLASS_HOME: redactHome },
+  });
+
+  const db = join(redactHome, 'traceglass.sqlite');
+  assert(readFileSync(db, 'latin1').includes('123-45-6789'), 'PII not present before redaction');
+  const anchorBefore = cli(['verify', 'pii-run'], { home: redactHome }).match(/runHash: (\w+)/)[1];
+
+  // Dry run must NOT change anything.
+  const dry = cli(['redact', 'pii-run', '--path', 'input.ssn'], { home: redactHome });
+  assert(/DRY RUN/.test(dry), `expected a dry run: ${dry}`);
+  assert(readFileSync(db, 'latin1').includes('123-45-6789'), 'dry run destroyed data!');
+
+  cli(['redact', 'pii-run', '--path', 'input.ssn', '--reason', 'erasure', '--yes'], {
+    home: redactHome,
+  });
+  const after = readFileSync(db, 'latin1');
+  assert(!after.includes('123-45-6789'), 'PII still on disk after redaction');
+  assert(after.includes('visible'), 'sibling value was destroyed too');
+
+  const verifyOut = cli(['verify', 'pii-run'], { home: redactHome });
+  const anchorAfter = verifyOut.match(/runHash: (\w+)/)[1];
+  assert(anchorAfter === anchorBefore, `anchor changed: ${anchorBefore} -> ${anchorAfter}`);
+  assert(/chain intact/.test(verifyOut), 'chain broken after redaction');
+  assert(/Signature OK/.test(verifyOut), 'original signature no longer validates');
+});
+
+// 15b. redaction is visible to an auditor in the report
+check('the audit report discloses what was redacted', () => {
+  const redactHome = join(out, 'redact-home');
+  const reportFile = join(out, 'redacted.html');
+  cli(['report', 'pii-run', '-o', reportFile], { home: redactHome });
+  const html = readFileSync(reportFile, 'utf8');
+  assert(html.includes('Data minimisation'), 'no data-minimisation row');
+  assert(html.includes('input.ssn'), 'redacted path not disclosed');
+});
+
+// 16. watch --once: auto-record a Claude Code session as signed evidence
 check('watch --once records a settled Claude Code session (signed, idempotent)', () => {
   const sessions = join(out, 'watch-sessions/-proj');
   mkdirSync(sessions, { recursive: true });
@@ -262,7 +313,7 @@ check('watch --once records a settled Claude Code session (signed, idempotent)',
   assert(/0 session\(s\) recorded/.test(again), `not idempotent: ${again}`);
 });
 
-// 16. watch --once with a violated policy exits 1 and audit-logs it
+// 17. watch --once with a violated policy exits 1 and audit-logs it
 check('watch --once fails the sweep on a policy violation (exit 1, audited)', () => {
   const policyFile = join(out, 'watch-policy.json');
   writeFileSync(

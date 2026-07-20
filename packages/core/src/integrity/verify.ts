@@ -1,5 +1,6 @@
 import type { Run, Step } from '../model.js';
 import { hashStep } from './hash.js';
+import { verifyCommitments } from '../redact/commit.js';
 
 export interface VerifyResult {
   /** True if the stored chain matches a freshly recomputed one. */
@@ -34,10 +35,32 @@ export function verifyRun(run: Run): VerifyResult {
     prevHash = step.hash;
   }
 
-  const expectedRunHash =
-    run.steps.length > 0
-      ? hashChainAnchor(run.steps)
-      : '';
+  /*
+   * v0.6: for steps carrying per-leaf commitments, the hash covers the
+   * COMMITMENTS rather than the raw payload — that is what lets a leaf be
+   * redacted without breaking the chain. It also means editing a raw value no
+   * longer moves the hash, so payload authenticity MUST be checked against the
+   * commitments here. Without this, redaction-enabled runs would silently lose
+   * tamper-detection on exactly the data auditors care about.
+   */
+  if (!broken) {
+    for (const step of run.steps) {
+      if (!step.commitments) continue;
+      const check = verifyCommitments(step, step.commitments, step.salts ?? {});
+      if (!check.ok) {
+        return {
+          ok: false,
+          brokenStepIndex: step.index,
+          brokenStepId: step.id,
+          message: `Integrity check FAILED: step #${step.index} (${step.id}) payload does not match its commitment at ${check.mismatched.join(', ')}. The recorded data was altered.`,
+          expectedRunHash: hashChainAnchor(run.steps),
+          storedRunHash: run.runHash,
+        };
+      }
+    }
+  }
+
+  const expectedRunHash = run.steps.length > 0 ? hashChainAnchor(run.steps) : '';
 
   if (broken) {
     return {

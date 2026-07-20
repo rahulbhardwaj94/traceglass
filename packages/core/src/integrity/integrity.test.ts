@@ -8,8 +8,7 @@ import { applyHashChain, canonicalize } from './hash.js';
 import { verifyRun } from './verify.js';
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), '../../../../fixtures');
-const load = (name: string): unknown =>
-  JSON.parse(readFileSync(join(fixturesDir, name), 'utf8'));
+const load = (name: string): unknown => JSON.parse(readFileSync(join(fixturesDir, name), 'utf8'));
 
 const run = finalizeRun(ingestNative(load('sample-run-native.json')));
 

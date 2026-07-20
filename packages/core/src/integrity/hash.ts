@@ -13,6 +13,14 @@ import type { Run, Step } from '../model.js';
  * it. That cascade is what makes the record auditable rather than just logged.
  */
 
+/**
+ * Payload fields that carry per-leaf commitments (v0.6 redaction). Declared
+ * here rather than in redact/ because the hash function must consult them and
+ * redact/commit.ts already depends on `canonicalize` below.
+ */
+export const COMMITTED_FIELDS = ['input', 'output', 'dataPayload'] as const;
+export type CommittedField = (typeof COMMITTED_FIELDS)[number];
+
 /** Fields that are covered by the hash (everything except the chain fields). */
 const HASHED_FIELDS = [
   'id',
@@ -51,19 +59,53 @@ function sortValue(value: unknown): unknown {
   return value;
 }
 
-/** Canonical string of a step's hashed content (excludes hash/prevHash/runId). */
+/**
+ * Sub-map of a commitment map belonging to one payload field. Paths are
+ * `<field>`, `<field>.x`, or `<field>[0]`, so prefix matching is exact.
+ */
+function commitmentViewFor(
+  commitments: Record<string, string>,
+  field: CommittedField,
+): Record<string, string> {
+  const view: Record<string, string> = {};
+  for (const [path, commitment] of Object.entries(commitments)) {
+    if (path === field || path.startsWith(`${field}.`) || path.startsWith(`${field}[`)) {
+      view[path] = commitment;
+    }
+  }
+  return view;
+}
+
+/**
+ * Canonical string of a step's hashed content (excludes hash/prevHash/runId).
+ *
+ * v0.6: when a step carries per-leaf `commitments`, each payload field is
+ * hashed via its commitments rather than its raw value. That is what lets a
+ * leaf be redacted later without changing the step hash — the chain never
+ * covered the raw value in the first place. Steps WITHOUT commitments hash
+ * exactly as they always did, so every pre-0.6 record still verifies.
+ */
 export function canonicalStep(step: Step): string {
   const picked: Record<string, unknown> = {};
   for (const f of HASHED_FIELDS) {
     const v = (step as Record<string, unknown>)[f];
     if (v !== undefined) picked[f] = v;
   }
+  const commitments = step.commitments;
+  if (commitments) {
+    for (const field of COMMITTED_FIELDS) {
+      const view = commitmentViewFor(commitments, field);
+      if (Object.keys(view).length > 0) picked[field] = view;
+    }
+  }
   return canonicalize(picked);
 }
 
 /** Compute the hash of a single step given the previous step's hash. */
 export function hashStep(step: Step, prevHash: string): string {
-  return createHash('sha256').update(canonicalStep(step) + prevHash).digest('hex');
+  return createHash('sha256')
+    .update(canonicalStep(step) + prevHash)
+    .digest('hex');
 }
 
 /**

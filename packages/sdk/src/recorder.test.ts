@@ -73,6 +73,50 @@ describe('startRecording', () => {
     expect(run.warnings.some((w) => w.kind === 'error')).toBe(true);
   });
 
+  it('records commitments by default so the run is redactable later (v0.6)', async () => {
+    const rec = startRecording({ name: 'redactable', dir: null });
+    const s = rec.step({
+      type: 'tool_call',
+      toolName: 'db',
+      label: 'q',
+      input: { ssn: '1', ok: 2 },
+    });
+    expect(Object.keys(s.commitments!).sort()).toEqual(['input.ok', 'input.ssn']);
+    expect(Object.keys(s.salts!).sort()).toEqual(['input.ok', 'input.ssn']);
+    const run = await rec.end();
+    expect(verifyRun(run).ok).toBe(true);
+  });
+
+  it('redactable:false reproduces pre-0.6 hashing (no commitments)', async () => {
+    const rec = startRecording({ name: 'legacy', dir: null, redactable: false });
+    const s = rec.step({ type: 'user_input', label: 'go', input: { a: 1 } });
+    expect(s.commitments).toBeUndefined();
+    expect(s.salts).toBeUndefined();
+    expect(verifyRun(await rec.end()).ok).toBe(true);
+  });
+
+  it('capture-time patterns scrub the value before it is ever stored', async () => {
+    const rec = startRecording({
+      name: 'scrubbed',
+      dir: null,
+      redactPatterns: ['email', 'ssn'],
+    });
+    const s = rec.step({
+      type: 'tool_call',
+      toolName: 'lookup',
+      label: 'lookup',
+      input: { email: 'jane@example.com', account: '4471' },
+    });
+    expect((s.input as { email: string }).email).toBe('[traceglass:redacted]');
+    expect((s.input as { account: string }).account).toBe('4471'); // untouched
+    expect(s.redactions![0]!.reason).toBe('pattern:email');
+    expect(s.redactions![0]!.by).toBe('pattern');
+    const run = await rec.end();
+    expect(verifyRun(run).ok).toBe(true);
+    // The original never appears anywhere in the serialized record.
+    expect(JSON.stringify(run)).not.toContain('jane@example.com');
+  });
+
   it('refuses steps after end and empty recordings', async () => {
     const rec = startRecording({ name: 'r', dir: null });
     await expect(rec.end()).rejects.toThrow(/no steps/);
