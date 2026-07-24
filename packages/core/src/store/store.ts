@@ -33,6 +33,10 @@ export class RunStore {
     }
     this.db = new Database(path);
     this.db.pragma('journal_mode = WAL');
+    // Zero out freed content instead of leaving it readable in the page file.
+    // Without this, a redacted value survives in a freed page and `strings` on
+    // the .sqlite recovers it verbatim — an erasure claim that does not hold.
+    this.db.pragma('secure_delete = ON');
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS runs (
         id          TEXT PRIMARY KEY,
@@ -181,6 +185,21 @@ export class RunStore {
         runHash: validated.runHash,
         cost: validated.totals.cost,
       });
+    this.purgeFreedPages();
+  }
+
+  /**
+   * Reclaim freed pages so a removed value cannot be read back out of the file.
+   *
+   * secure_delete only governs pages freed from here on; an UPDATE also leaves
+   * the superseded row in the WAL until it is checkpointed. Redaction and
+   * retention are both rare, explicit operations, so paying for a checkpoint +
+   * VACUUM there is worth an erasure guarantee that survives someone running
+   * `strings` on a stolen copy of the database.
+   */
+  private purgeFreedPages(): void {
+    this.db.pragma('wal_checkpoint(TRUNCATE)');
+    this.db.exec('VACUUM');
   }
 
   /**
@@ -200,7 +219,10 @@ export class RunStore {
         runHash: String(r.run_hash),
       }));
     });
-    return prune(cutoffIso);
+    const pruned = prune(cutoffIso);
+    // Outside the transaction: VACUUM cannot run inside one.
+    if (pruned.length > 0) this.purgeFreedPages();
+    return pruned;
   }
 
   close(): void {

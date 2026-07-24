@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -92,5 +93,69 @@ describe('RunStore (acceptance §M2)', () => {
     expect(pruned[0]!.runHash).toBe(run.runHash);
     expect(store.getRun('old-run')).toBeNull();
     expect(store.getRun(run.id)).not.toBeNull();
+  });
+});
+
+/**
+ * Erasure has to hold against the file, not just against a SELECT. SQLite
+ * leaves a superseded row readable in a freed page, so before secure_delete +
+ * VACUUM a "redacted" value came straight back out of the .sqlite via `strings`.
+ */
+describe('RunStore erasure is durable on disk (v0.7.1)', () => {
+  const SECRET = 'chase-account-4471-SECRET';
+  let dir: string;
+  let dbPath: string;
+  let store: RunStore;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'tg-store-erase-'));
+    dbPath = join(dir, 'traceglass.sqlite');
+    store = new RunStore(dbPath);
+  });
+  afterEach(() => {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** Raw bytes of the db plus any WAL sidecar — what an attacker would grep. */
+  const onDisk = (): string =>
+    ['', '-wal', '-shm']
+      .map((suffix) => {
+        try {
+          return readFileSync(dbPath + suffix, 'latin1');
+        } catch {
+          return '';
+        }
+      })
+      .join('');
+
+  const withSecret = (id: string) => {
+    const steps = run.steps.map((s, i) => (i === 0 ? { ...s, input: SECRET } : s));
+    return { ...run, id, steps };
+  };
+
+  it('a redacted value is not recoverable from the database file', () => {
+    store.saveRun(withSecret('redact-me'));
+    expect(onDisk()).toContain(SECRET); // precondition: it really was written
+
+    const scrubbed = store.getRun('redact-me')!;
+    store.replaceRedacted({
+      ...scrubbed,
+      steps: scrubbed.steps.map((s, i) =>
+        i === 0 ? { ...s, input: '[traceglass:redacted]' } : s,
+      ),
+    });
+
+    expect(store.getRun('redact-me')!.steps[0]!.input).toBe('[traceglass:redacted]');
+    expect(onDisk()).not.toContain(SECRET);
+  });
+
+  it('a pruned run leaves no readable remains either', () => {
+    store.saveRun(withSecret('prune-me'));
+    expect(onDisk()).toContain(SECRET);
+
+    expect(store.pruneOlderThan(new Date(Date.now() + 60_000).toISOString())).toHaveLength(1);
+    expect(store.getRun('prune-me')).toBeNull();
+    expect(onDisk()).not.toContain(SECRET);
   });
 });
