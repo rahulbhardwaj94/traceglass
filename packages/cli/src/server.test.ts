@@ -234,6 +234,32 @@ describe('serve mode: token auth + collector ingest (v0.3)', () => {
     s.close();
   });
 
+  it('requireAuthForReads cannot be bypassed with a non-canonical URL', async () => {
+    // The router decodes percent-escapes before matching, so "/%61pi/runs"
+    // reaches the /api/runs handler. A gate that string-matched req.url served
+    // every stored run to an anonymous caller.
+    const s = new RunStore(':memory:');
+    s.saveRun(run);
+    const a = buildServer(s, { token: 't', enableIngest: true, requireAuthForReads: true });
+    await a.ready();
+
+    const authorized = await a.inject({
+      method: 'GET',
+      url: '/api/runs',
+      headers: { authorization: 'Bearer t' },
+    });
+    expect(authorized.statusCode).toBe(200);
+    expect(authorized.body).toContain(run.id);
+
+    for (const url of ['/api/runs', '/%61pi/runs', '/api/%72uns', `/api/runs/${run.id}`]) {
+      const res = await a.inject({ method: 'GET', url });
+      expect(res.statusCode, `${url} must not serve run data anonymously`).toBe(401);
+      expect(res.body).not.toContain(run.runHash);
+    }
+    await a.close();
+    s.close();
+  });
+
   it('POST /v1/traces accepts an OTLP/JSON export', async () => {
     const { s, a } = await collectorApp();
     const otelBody = JSON.parse(readFileSync(join(fixturesDir, 'sample-run-otel.json'), 'utf8'));

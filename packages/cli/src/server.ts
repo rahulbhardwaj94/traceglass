@@ -68,6 +68,28 @@ function tokenMatches(header: string | undefined, token: string): boolean {
 }
 
 /**
+ * Path used for the authorization decision. Prefer the route Fastify matched —
+ * already canonical — and fall back to the decoded pathname so an unrouted
+ * request can never slip through undecoded. The router decodes once, so we do
+ * too; matching its behaviour exactly is the point.
+ */
+function authPath(req: FastifyRequest): string {
+  const matched = req.routeOptions?.url;
+  if (matched) return matched;
+  const path = req.url.split('?')[0] ?? '';
+  try {
+    return decodeURIComponent(path);
+  } catch {
+    return path;
+  }
+}
+
+/** True when the request targets the JSON API rather than the static SPA. */
+function isApiRoute(path: string): boolean {
+  return path === '/api' || path.startsWith('/api/');
+}
+
+/**
  * Build the Fastify app: JSON API over the run store plus the static web SPA.
  * By default (dashboard mode) the store is read-only from the server's
  * perspective; serve mode adds authenticated collector ingest routes.
@@ -78,8 +100,12 @@ export function buildServer(store: RunStore, opts: ServerOptions = {}): FastifyI
   if (opts.token) {
     const token = opts.token;
     app.addHook('preHandler', async (req: FastifyRequest, reply: FastifyReply) => {
+      // Authorize against the route Fastify actually matched, never the raw
+      // URL. The router decodes percent-escapes before matching, so a raw
+      // string test lets "/%61pi/runs" miss a "/api" prefix check and still
+      // reach the /api/runs handler — an unauthenticated read of every run.
       const needsAuth =
-        req.method === 'POST' || (opts.requireAuthForReads === true && req.url.startsWith('/api'));
+        req.method === 'POST' || (opts.requireAuthForReads === true && isApiRoute(authPath(req)));
       if (needsAuth && !tokenMatches(req.headers.authorization, token)) {
         return reply.code(401).send({ error: 'unauthorized' });
       }
