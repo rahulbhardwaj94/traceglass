@@ -1,0 +1,335 @@
+{
+  "about": "Canonicalization vectors. Parse `inputJson` as JSON, canonicalize the resulting value, and you MUST get `canonical` byte-for-byte; sha256 of its UTF-8 bytes MUST equal `sha256`.",
+  "hashVersion": 1,
+  "vectors": [
+    {
+      "name": "scalar-string",
+      "note": "A bare string is a valid canonical input.",
+      "inputJson": "\"hello\"",
+      "canonical": "\"hello\"",
+      "sha256": "5aa762ae383fbb727af3c7a36d4940a5b8c40a989452d2304fc958ff3f354e7a"
+    },
+    {
+      "name": "scalar-null",
+      "note": "",
+      "inputJson": "null",
+      "canonical": "null",
+      "sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+    },
+    {
+      "name": "scalar-true",
+      "note": "",
+      "inputJson": "true",
+      "canonical": "true",
+      "sha256": "b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b"
+    },
+    {
+      "name": "empty-object",
+      "note": "",
+      "inputJson": "{}",
+      "canonical": "{}",
+      "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "name": "empty-array",
+      "note": "",
+      "inputJson": "[]",
+      "canonical": "[]",
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "name": "key-order-ascii",
+      "note": "Keys sort by UTF-16 code unit.",
+      "inputJson": "{\"b\":1,\"a\":2,\"A\":3,\"_\":4,\"0\":5}",
+      "canonical": "{\"0\":5,\"A\":3,\"_\":4,\"a\":2,\"b\":1}",
+      "sha256": "1204b31c6e3c6737377c04038e67ff1db9844a06973a45abc8916b683f03f7e9"
+    },
+    {
+      "name": "key-order-nested",
+      "note": "Sorting recurses; array order is preserved.",
+      "inputJson": "{\"z\":{\"y\":1,\"x\":2},\"a\":[{\"q\":1,\"p\":2}]}",
+      "canonical": "{\"a\":[{\"p\":2,\"q\":1}],\"z\":{\"x\":2,\"y\":1}}",
+      "sha256": "71f9b2039ea4b074df61398f06fa8da376ba959cfff02fd9051de5b973c5945b"
+    },
+    {
+      "name": "key-order-array-index",
+      "note": "ARRAY-INDEX KEYS SORT NUMERICALLY, NOT LEXICOGRAPHICALLY. A naive \"sort all keys as strings\" implementation produces {\"1\":3,\"10\":1,\"2\":2} and a different hash. See SPEC.md §4.2.2.",
+      "inputJson": "{\"10\":1,\"2\":2,\"1\":3}",
+      "canonical": "{\"1\":3,\"2\":2,\"10\":1}",
+      "sha256": "e0c78ab1e9ce6019cfb6433b1bc900cf402e3965602bb947f54031cb16a659fa"
+    },
+    {
+      "name": "key-order-index-vs-string",
+      "note": "Array-index keys (2, 10, 4294967294) come FIRST in numeric order; everything else — including \"01\", \"-1\", \"1.5\" and 4294967295 (= 2**32-1, deliberately NOT an index) — follows in UTF-16 order.",
+      "inputJson": "{\"b\":1,\"10\":2,\"a\":3,\"2\":4,\"01\":5,\"-1\":6,\"1.5\":7,\"4294967295\":8,\"4294967294\":9}",
+      "canonical": "{\"2\":4,\"10\":2,\"4294967294\":9,\"-1\":6,\"01\":5,\"1.5\":7,\"4294967295\":8,\"a\":3,\"b\":1}",
+      "sha256": "21decc137e246e34f0d1dda92e9826158295eb129f971286c19adaf351526970"
+    },
+    {
+      "name": "key-order-big-numeric",
+      "note": "Only 3 is an array index; the 20-digit key is an ordinary string key.",
+      "inputJson": "{\"99999999999999999999\":1,\"b\":2,\"3\":3}",
+      "canonical": "{\"3\":3,\"99999999999999999999\":1,\"b\":2}",
+      "sha256": "bc90e45c0a8dc885e52403d1b8a0ac0f0ce188a0d34a02b2f80cef5d24bcd4a7"
+    },
+    {
+      "name": "key-empty-string",
+      "note": "The empty key sorts first among non-index keys.",
+      "inputJson": "{\"\":1,\"a\":2}",
+      "canonical": "{\"\":1,\"a\":2}",
+      "sha256": "9cf535828d5dbc2d87d9c4c0b99d9e7308b5fdbd22aac02bac1d60f6ac9aa127"
+    },
+    {
+      "name": "key-order-astral",
+      "note": "U+1F600 sorts BEFORE U+E000 and U+FFFD because sorting is on UTF-16 code units (lead surrogate U+D83D), not code points. Any implementation sorting by code point produces a DIFFERENT hash here.",
+      "inputJson": "{\"\\ud83d\\ude00\":1,\"\\ufffd\":2,\"\\ue000\":3}",
+      "canonical": "{\"😀\":1,\"\":3,\"�\":2}",
+      "sha256": "9a7f5a9a9b04e6e39d6d6296de5dc8d5641e6b405327a2f50383abbc73d66e73"
+    },
+    {
+      "name": "null-value-kept",
+      "note": "null is a value and is retained.",
+      "inputJson": "{\"a\":null}",
+      "canonical": "{\"a\":null}",
+      "sha256": "d091f9c83c091f79652fe8786375b3fe4ce0861a56f5bfbafedbe431877ff0e8"
+    },
+    {
+      "name": "array-with-null",
+      "note": "",
+      "inputJson": "[null,1,\"x\"]",
+      "canonical": "[null,1,\"x\"]",
+      "sha256": "76ae463497fb8bb7c41b8b5c7eb400172fe8d85dc050f8d58565e7ee6d73f8e5"
+    },
+    {
+      "name": "nested-empties",
+      "note": "",
+      "inputJson": "{\"a\":{},\"b\":[],\"c\":[[]]}",
+      "canonical": "{\"a\":{},\"b\":[],\"c\":[[]]}",
+      "sha256": "70aaa9f6ce52f7821a345e253ae3f2a8a60a5df1e2abe104616f3adb2975c5e7"
+    },
+    {
+      "name": "array-order-preserved",
+      "note": "Arrays are ordered data; they are never sorted.",
+      "inputJson": "[3,1,2]",
+      "canonical": "[3,1,2]",
+      "sha256": "51bda7ab4e44726cde71fcb6e4b515357059bb6b6dd5146d1fc50f73f11678c6"
+    },
+    {
+      "name": "unicode-nfc",
+      "note": "Precomposed e-acute (NFC).",
+      "inputJson": "\"caf\\u00e9\"",
+      "canonical": "\"café\"",
+      "sha256": "28380feb8724d669bc8d4cf5b5a5bb1adbdc61b81ebd06f3fabc567b4f3b0fc5"
+    },
+    {
+      "name": "unicode-nfd",
+      "note": "Decomposed e + combining acute (NFD). Canonically DISTINCT from the NFC vector above: no Unicode normalization is applied.",
+      "inputJson": "\"cafe\\u0301\"",
+      "canonical": "\"café\"",
+      "sha256": "c7d7e72b8ad0dd91beb4044a4bb17c6c8a9672cc620c4c76e6584f3525d400d1"
+    },
+    {
+      "name": "unicode-emoji-zwj",
+      "note": "Woman astronaut: ZWJ sequence.",
+      "inputJson": "\"\\ud83d\\udc69\\u200d\\ud83d\\ude80\"",
+      "canonical": "\"👩‍🚀\"",
+      "sha256": "303190f957d28034748951442adefe6bab2568fee71c859e00f4bb9c4d2526d2"
+    },
+    {
+      "name": "unicode-devanagari",
+      "note": "",
+      "inputJson": "\"\\u0928\\u092e\\u0938\\u094d\\u0924\\u0947\"",
+      "canonical": "\"नमस्ते\"",
+      "sha256": "edf96c10c150674cdf9e71d5d0d3dbbf7f22857c8cf7bd51a00554cdfc351b9a"
+    },
+    {
+      "name": "unicode-lone-surrogate",
+      "note": "An unpaired surrogate is emitted as a \\udXXX escape (well-formed JSON.stringify, ES2019).",
+      "inputJson": "\"\\ud800\"",
+      "canonical": "\"\\ud800\"",
+      "sha256": "8c0c59dd0d275aadcd462a5fe12eb352cbdfeaf961eae4f85a4660521df7d2f5"
+    },
+    {
+      "name": "string-escapes",
+      "note": "Two-char escapes are used where they exist. Solidus is NOT escaped.",
+      "inputJson": "\"\\\"\\\\/\\b\\f\\n\\r\\t\"",
+      "canonical": "\"\\\"\\\\/\\b\\f\\n\\r\\t\"",
+      "sha256": "11b17be1c38ac0f40c1c36cb58861f9853f04d6702d8edf4c79e6aca6216c346"
+    },
+    {
+      "name": "string-controls",
+      "note": "C0 controls are escaped as \\u00XX; U+007F (DEL) is emitted RAW.",
+      "inputJson": "\"\\u0000\\u001f\\u007f\"",
+      "canonical": "\"\\u0000\\u001f\"",
+      "sha256": "dc5086a147ac8c34ce6ba78fdf00f33f1c891a8ded595a7cfd188483d64d6068"
+    },
+    {
+      "name": "string-line-separators",
+      "note": "U+2028/U+2029 are emitted RAW, not escaped.",
+      "inputJson": "\"\\u2028\\u2029\"",
+      "canonical": "\"  \"",
+      "sha256": "e3a0e2262ac7790f4df36b522a8fbdd4ee3370d568eb15dc25c5f1775f14ed6c"
+    },
+    {
+      "name": "string-nbsp",
+      "note": "",
+      "inputJson": "\"\\u00a0\"",
+      "canonical": "\" \"",
+      "sha256": "e82d47dec07b50559f503bd6eb8adfa42bfd31b8294f7d9aaffbba8a9ec66aaf"
+    },
+    {
+      "name": "number-int-zero",
+      "note": "",
+      "inputJson": "0",
+      "canonical": "0",
+      "sha256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9"
+    },
+    {
+      "name": "number-int",
+      "note": "",
+      "inputJson": "100",
+      "canonical": "100",
+      "sha256": "ad57366865126e55649ecb23ae1d48887544976efea46a48eb5d85a6eeb4d306"
+    },
+    {
+      "name": "number-int-trailing-zero",
+      "note": "An integral value loses its \".0\": canonical form is \"100\".",
+      "inputJson": "100.0",
+      "canonical": "100",
+      "sha256": "ad57366865126e55649ecb23ae1d48887544976efea46a48eb5d85a6eeb4d306"
+    },
+    {
+      "name": "number-negative-zero",
+      "note": "Negative zero canonicalizes to \"0\".",
+      "inputJson": "-0.0",
+      "canonical": "0",
+      "sha256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9"
+    },
+    {
+      "name": "number-simple-float",
+      "note": "The README cost example.",
+      "inputJson": "4.7",
+      "canonical": "4.7",
+      "sha256": "db7dc8ce07623b4654a57d0ad29200bdcf4eff470334d40dae8a2675a165372a"
+    },
+    {
+      "name": "number-binary-artifact",
+      "note": "The value of 0.1+0.2. Shortest round-trip repr, all 17 digits.",
+      "inputJson": "0.30000000000000004",
+      "canonical": "0.30000000000000004",
+      "sha256": "06bad31060c1212ae832de4c031f7b31e3b48aed57858294478cb19450cf34ca"
+    },
+    {
+      "name": "number-cent",
+      "note": "",
+      "inputJson": "0.01",
+      "canonical": "0.01",
+      "sha256": "312b95ee5a344d2f7a16ad817ff70788980da6e30b9bb04b651d53847abd476f"
+    },
+    {
+      "name": "number-1e-4",
+      "note": "Last magnitude where JS and Python agree.",
+      "inputJson": "0.0001",
+      "canonical": "0.0001",
+      "sha256": "e539aebac7fd2ed8aba8854fedeaa65436962f8ee1c82341b394698f085b6496"
+    },
+    {
+      "name": "number-1e-5",
+      "note": "JS emits fixed \"0.00001\"; Python json.dumps emits \"1e-05\". FIRST DIVERGENCE.",
+      "inputJson": "0.00001",
+      "canonical": "0.00001",
+      "sha256": "661710915adfa7c40b5dbd6b2122dfa65b1accb57a8b7cdee05423ecfe14b0c7"
+    },
+    {
+      "name": "number-1e-6",
+      "note": "JS \"0.000001\"; Python \"1e-06\".",
+      "inputJson": "0.000001",
+      "canonical": "0.000001",
+      "sha256": "159fb29a827ad04b260aa6c8ab6d8637f8f2b38af5c4f3cb49d6a21205e040f8"
+    },
+    {
+      "name": "number-1e-7",
+      "note": "JS \"1e-7\"; Python \"1e-07\" (zero-padded exponent).",
+      "inputJson": "1e-7",
+      "canonical": "1e-7",
+      "sha256": "5b33e02f2c5103a05d32f6ba9cb058294452bfbf393967f68bb30c1bdcbbab22"
+    },
+    {
+      "name": "number-micro-cost",
+      "note": "A realistic per-token cost. JS \"0.000025\"; Python \"2.5e-05\".",
+      "inputJson": "0.000025",
+      "canonical": "0.000025",
+      "sha256": "2d8a28589fc2fda11cb45ee6bb7beb24a343ad73cceef4d1744c0edeab1370e0"
+    },
+    {
+      "name": "number-1e21",
+      "note": "JS switches to exponential at 1e21: \"1e+21\".",
+      "inputJson": "1e21",
+      "canonical": "1e+21",
+      "sha256": "241c4643fa70b1dcde1205b71be4e3bebb17e9f880c8e1a33d0ead6c27271d3c"
+    },
+    {
+      "name": "number-1e20",
+      "note": "Still fixed notation: \"100000000000000000000\".",
+      "inputJson": "1e20",
+      "canonical": "100000000000000000000",
+      "sha256": "c344e9487bfbd5c4e03c9fb90d62a5dde5e00b54d55c46e9f4a803aea162b80c"
+    },
+    {
+      "name": "number-denormal-min",
+      "note": "Smallest positive double.",
+      "inputJson": "5e-324",
+      "canonical": "5e-324",
+      "sha256": "c46e7ca1be4c8734f373a56530787288fa2058d73d07855e9247e949f811a42a"
+    },
+    {
+      "name": "number-max-safe-int",
+      "note": "",
+      "inputJson": "9007199254740991",
+      "canonical": "9007199254740991",
+      "sha256": "f40b423c2dd95ff2b2f027e22208f438cf7242862e5e746860e697308c9add26"
+    },
+    {
+      "name": "number-beyond-max-safe-int",
+      "note": "Not representable as a double; canonicalizes to 9007199254740992. A verifier using arbitrary-precision integers gets a DIFFERENT answer.",
+      "inputJson": "9007199254740993",
+      "canonical": "9007199254740992",
+      "sha256": "c681da39d7273a6a24c15c9cac3a75526ff2ecf8ba4ee60346a0c70c8163bdb2"
+    },
+    {
+      "name": "number-large-float",
+      "note": "",
+      "inputJson": "1.2345678901234567e300",
+      "canonical": "1.2345678901234567e+300",
+      "sha256": "474a26e6c4ae6e68796d4bbec9a3370ba942e07ccd77a975f9f42290742dc26f"
+    },
+    {
+      "name": "number-negative",
+      "note": "",
+      "inputJson": "-4.7",
+      "canonical": "-4.7",
+      "sha256": "5296b277bcb03e4af3c8a8f871ba19cb71c0f1a231579498ffa742c4189dcf48"
+    },
+    {
+      "name": "number-huge-literal",
+      "note": "Parsed as a double, so canonicalizes to 1.2345678901234568e+29.",
+      "inputJson": "123456789012345678901234567890",
+      "canonical": "1.2345678901234568e+29",
+      "sha256": "a2379507385d6bf639d8eb6afb3c4c1937b9f994691c57b1f2cc08a0ece3ab4a"
+    },
+    {
+      "name": "payload-tool-args",
+      "note": "",
+      "inputJson": "{\"query\":\"SELECT * FROM users WHERE id = 42\",\"timeout_ms\":3000,\"retries\":0}",
+      "canonical": "{\"query\":\"SELECT * FROM users WHERE id = 42\",\"retries\":0,\"timeout_ms\":3000}",
+      "sha256": "09cebb13cdee62cc0876a5a33706a17a5d89daa2ba215de515f05bc9efdcc2dc"
+    },
+    {
+      "name": "payload-nested",
+      "note": "",
+      "inputJson": "{\"result\":{\"rows\":[{\"id\":1,\"name\":\"\\u00c5sa\"},{\"id\":2,\"name\":\"\\ud83c\\udf3f\"}],\"count\":2},\"cached\":false}",
+      "canonical": "{\"cached\":false,\"result\":{\"count\":2,\"rows\":[{\"id\":1,\"name\":\"Åsa\"},{\"id\":2,\"name\":\"🌿\"}]}}",
+      "sha256": "f9665117c4f11104317dc274b78735cf60bb30fb894620b34368a91b19867a7c"
+    }
+  ]
+}

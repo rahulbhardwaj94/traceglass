@@ -1,0 +1,11 @@
+{
+  "about": "Ed25519 signature over canonicalize({runId, runHash, signedAt}). The key below is PUBLISHED and TEST ONLY.",
+  "hashVersion": 1,
+  "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAtU4wnsl41oQtdJgQxyhbv3pHMawDnj8pMDRSu0jobWU=\n-----END PUBLIC KEY-----\n",
+  "keyId": "29e0d3e8fb7ac052",
+  "runId": "vec-min",
+  "runHash": "d2c9a3c320ed186a730eeeae371da2ec9ce10d0301584499326fc21ecb58113a",
+  "signedAt": "2026-07-25T09:00:11.000Z",
+  "signaturePayload": "{\"runHash\":\"d2c9a3c320ed186a730eeeae371da2ec9ce10d0301584499326fc21ecb58113a\",\"runId\":\"vec-min\",\"signedAt\":\"2026-07-25T09:00:11.000Z\"}",
+  "signatureBase64": "imoAqkcfYYG+7p2rPxyaB3aIVRVq3T7hxpoz4PAsxpvnECJMx8geE9v8PUpysrobnQeLKLT+T38a/aHK+0+nDA=="
+}

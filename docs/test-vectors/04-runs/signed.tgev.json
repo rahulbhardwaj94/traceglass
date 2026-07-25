@@ -1,0 +1,62 @@
+{
+  "formatVersion": 1,
+  "exportedAt": "2026-07-25T09:00:00.000Z",
+  "run": {
+    "id": "vec-min",
+    "name": "minimal run",
+    "startedAt": "2026-07-25T09:00:00.000Z",
+    "endedAt": "2026-07-25T09:00:10.000Z",
+    "status": "completed",
+    "currency": "INR",
+    "totals": {
+      "tokens": 1280,
+      "cost": 4.7,
+      "durationMs": 5000,
+      "steps": 2
+    },
+    "warnings": [],
+    "steps": [
+      {
+        "id": "vec-min:0",
+        "runId": "vec-min",
+        "index": 0,
+        "type": "user_input",
+        "label": "User request",
+        "startedAt": "2026-07-25T09:00:00.000Z",
+        "durationMs": 0,
+        "tokens": 0,
+        "cost": 0,
+        "input": "Summarise Q3 spend",
+        "spanId": "00000000000000a1",
+        "prevHash": "",
+        "hash": "00cfe8d49e5f804f9a86be29594aae555a8cd7e130d99ffff5a14595fdd326c6"
+      },
+      {
+        "id": "vec-min:1",
+        "runId": "vec-min",
+        "index": 1,
+        "type": "final_output",
+        "label": "Answer",
+        "startedAt": "2026-07-25T09:00:05.000Z",
+        "durationMs": 5000,
+        "tokens": 1280,
+        "cost": 4.7,
+        "output": {
+          "text": "Q3 spend was 4.7 lakh."
+        },
+        "spanId": "00000000000000a2",
+        "parentSpanId": "00000000000000a1",
+        "prevHash": "00cfe8d49e5f804f9a86be29594aae555a8cd7e130d99ffff5a14595fdd326c6",
+        "hash": "d2c9a3c320ed186a730eeeae371da2ec9ce10d0301584499326fc21ecb58113a"
+      }
+    ],
+    "runHash": "d2c9a3c320ed186a730eeeae371da2ec9ce10d0301584499326fc21ecb58113a",
+    "signature": {
+      "algorithm": "ed25519",
+      "keyId": "29e0d3e8fb7ac052",
+      "publicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAtU4wnsl41oQtdJgQxyhbv3pHMawDnj8pMDRSu0jobWU=\n-----END PUBLIC KEY-----\n",
+      "signature": "imoAqkcfYYG+7p2rPxyaB3aIVRVq3T7hxpoz4PAsxpvnECJMx8geE9v8PUpysrobnQeLKLT+T38a/aHK+0+nDA==",
+      "signedAt": "2026-07-25T09:00:11.000Z"
+    }
+  }
+}

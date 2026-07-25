@@ -1,0 +1,272 @@
+{
+  "about": "Leaf-walking paths and per-leaf commitments. commitment = sha256_hex(salt_ascii || canonical(value)), concatenated as UTF-8 text.",
+  "hashVersion": 1,
+  "walk": [
+    {
+      "name": "scalar",
+      "note": "",
+      "field": "input",
+      "inputJson": "\"hello\"",
+      "leaves": [
+        {
+          "path": "input",
+          "canonicalLeaf": "\"hello\""
+        }
+      ]
+    },
+    {
+      "name": "null",
+      "note": "",
+      "field": "input",
+      "inputJson": "null",
+      "leaves": [
+        {
+          "path": "input",
+          "canonicalLeaf": "null"
+        }
+      ]
+    },
+    {
+      "name": "nested-object",
+      "note": "",
+      "field": "input",
+      "inputJson": "{\"a\":{\"b\":1}}",
+      "leaves": [
+        {
+          "path": "input.a.b",
+          "canonicalLeaf": "1"
+        }
+      ]
+    },
+    {
+      "name": "array",
+      "note": "",
+      "field": "input",
+      "inputJson": "[\"x\",\"y\"]",
+      "leaves": [
+        {
+          "path": "input[0]",
+          "canonicalLeaf": "\"x\""
+        },
+        {
+          "path": "input[1]",
+          "canonicalLeaf": "\"y\""
+        }
+      ]
+    },
+    {
+      "name": "array-of-arrays",
+      "note": "",
+      "field": "input",
+      "inputJson": "[[1,2],[3]]",
+      "leaves": [
+        {
+          "path": "input[0][0]",
+          "canonicalLeaf": "1"
+        },
+        {
+          "path": "input[0][1]",
+          "canonicalLeaf": "2"
+        },
+        {
+          "path": "input[1][0]",
+          "canonicalLeaf": "3"
+        }
+      ]
+    },
+    {
+      "name": "object-numeric-keys",
+      "note": "",
+      "field": "input",
+      "inputJson": "{\"0\":\"x\",\"1\":\"y\"}",
+      "leaves": [
+        {
+          "path": "input.0",
+          "canonicalLeaf": "\"x\""
+        },
+        {
+          "path": "input.1",
+          "canonicalLeaf": "\"y\""
+        }
+      ]
+    },
+    {
+      "name": "empty-object-is-a-leaf",
+      "note": "",
+      "field": "input",
+      "inputJson": "{}",
+      "leaves": [
+        {
+          "path": "input",
+          "canonicalLeaf": "{}"
+        }
+      ]
+    },
+    {
+      "name": "empty-array-is-a-leaf",
+      "note": "",
+      "field": "input",
+      "inputJson": "[]",
+      "leaves": [
+        {
+          "path": "input",
+          "canonicalLeaf": "[]"
+        }
+      ]
+    },
+    {
+      "name": "nested-empties-are-leaves",
+      "note": "",
+      "field": "input",
+      "inputJson": "{\"a\":{},\"b\":[]}",
+      "leaves": [
+        {
+          "path": "input.a",
+          "canonicalLeaf": "{}"
+        },
+        {
+          "path": "input.b",
+          "canonicalLeaf": "[]"
+        }
+      ]
+    },
+    {
+      "name": "mixed",
+      "note": "",
+      "field": "output",
+      "inputJson": "{\"rows\":[{\"id\":1},{\"id\":2}],\"ok\":true}",
+      "leaves": [
+        {
+          "path": "output.rows[0].id",
+          "canonicalLeaf": "1"
+        },
+        {
+          "path": "output.rows[1].id",
+          "canonicalLeaf": "2"
+        },
+        {
+          "path": "output.ok",
+          "canonicalLeaf": "true"
+        }
+      ]
+    },
+    {
+      "name": "AMBIGUOUS-dotted-key",
+      "note": "Produces the SAME path \"input.a.b\" as {\"a\":{\"b\":1}}. See SPEC.md §9.3 — this is a known defect: such a leaf CANNOT be re-verified.",
+      "field": "input",
+      "inputJson": "{\"a.b\":1}",
+      "leaves": [
+        {
+          "path": "input.a.b",
+          "canonicalLeaf": "1"
+        }
+      ]
+    },
+    {
+      "name": "AMBIGUOUS-empty-key",
+      "note": "Produces path \"input.\" which does not resolve on read-back. Known defect.",
+      "field": "input",
+      "inputJson": "{\"\":1}",
+      "leaves": [
+        {
+          "path": "input.",
+          "canonicalLeaf": "1"
+        }
+      ]
+    },
+    {
+      "name": "AMBIGUOUS-bracket-key",
+      "note": "Produces path \"input.a[0]\", indistinguishable from {\"a\":[1]}. Known defect.",
+      "field": "input",
+      "inputJson": "{\"a[0]\":1}",
+      "leaves": [
+        {
+          "path": "input.a[0]",
+          "canonicalLeaf": "1"
+        }
+      ]
+    }
+  ],
+  "commitments": [
+    {
+      "name": "string",
+      "salt": "01010101010101010101010101010101",
+      "valueJson": "\"alice@example.com\"",
+      "canonicalValue": "\"alice@example.com\"",
+      "preimage": "01010101010101010101010101010101\"alice@example.com\"",
+      "commitment": "e1831467e6c55c0dd96b5fbe2d0b3baccffdd921c45b273685f112cc1b40b767"
+    },
+    {
+      "name": "number",
+      "salt": "02020202020202020202020202020202",
+      "valueJson": "4.7",
+      "canonicalValue": "4.7",
+      "preimage": "020202020202020202020202020202024.7",
+      "commitment": "b20a8a5c2329c6db2903a18ad132599877597783e7f1be0a0c0affb1904c2c4c"
+    },
+    {
+      "name": "micro-number",
+      "salt": "03030303030303030303030303030303",
+      "valueJson": "0.000025",
+      "canonicalValue": "0.000025",
+      "preimage": "030303030303030303030303030303030.000025",
+      "commitment": "546c86f62ce9103d4bcffd4ce6f57b750b928a2aa208687b65aa1045049140eb"
+    },
+    {
+      "name": "bool",
+      "salt": "04040404040404040404040404040404",
+      "valueJson": "true",
+      "canonicalValue": "true",
+      "preimage": "04040404040404040404040404040404true",
+      "commitment": "1741584ede82a5b72ba3a5d739d7b90b5fe4e180a0f2a866527f83ce694d5b2e"
+    },
+    {
+      "name": "null",
+      "salt": "05050505050505050505050505050505",
+      "valueJson": "null",
+      "canonicalValue": "null",
+      "preimage": "05050505050505050505050505050505null",
+      "commitment": "ad71443fe69833ded4489fce7d82549bd4b3a5a6186d620b5e5eec82d9ab4c05"
+    },
+    {
+      "name": "empty-object",
+      "salt": "06060606060606060606060606060606",
+      "valueJson": "{}",
+      "canonicalValue": "{}",
+      "preimage": "06060606060606060606060606060606{}",
+      "commitment": "ae54819edae7993e411efc5c8216174962ca3bb272937518bb36e37d303020ad"
+    },
+    {
+      "name": "empty-array",
+      "salt": "07070707070707070707070707070707",
+      "valueJson": "[]",
+      "canonicalValue": "[]",
+      "preimage": "07070707070707070707070707070707[]",
+      "commitment": "84a0ebbcc786a538e4ee01912c42e00acd376d684bcf171a65c50c0f6e004f97"
+    },
+    {
+      "name": "emoji",
+      "salt": "08080808080808080808080808080808",
+      "valueJson": "\"\\ud83c\\udf3f\"",
+      "canonicalValue": "\"🌿\"",
+      "preimage": "08080808080808080808080808080808\"🌿\"",
+      "commitment": "d793e3228fc9e71e89b2cdb1aade0da042cb3f6aee0f16847be71377c45c4fb3"
+    },
+    {
+      "name": "nfd",
+      "salt": "09090909090909090909090909090909",
+      "valueJson": "\"cafe\\u0301\"",
+      "canonicalValue": "\"café\"",
+      "preimage": "09090909090909090909090909090909\"café\"",
+      "commitment": "e9a322cb5c396af630d2efdf34b06b6f4d37e9cea90c38783bacc12928d5d218"
+    },
+    {
+      "name": "redaction-marker",
+      "salt": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+      "valueJson": "\"[traceglass:redacted]\"",
+      "canonicalValue": "\"[traceglass:redacted]\"",
+      "preimage": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a\"[traceglass:redacted]\"",
+      "commitment": "6b787b3aa6045bdd1d6897a4299b7db660b58b97bafea9cdb7bc6827e9d53609"
+    }
+  ]
+}

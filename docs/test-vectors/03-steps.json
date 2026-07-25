@@ -1,0 +1,44 @@
+{
+  "about": "Step canonical forms and chain hashes. hash = sha256_hex(canonicalStep(step) || prevHash), UTF-8. `canonicalStep` covers only the hashed fields; when commitments exist they replace the raw payload field.",
+  "hashVersion": 1,
+  "runs": {
+    "minimal": [
+      {
+        "id": "vec-min:0",
+        "index": 0,
+        "prevHash": "",
+        "canonicalStep": "{\"cost\":0,\"durationMs\":0,\"id\":\"vec-min:0\",\"index\":0,\"input\":\"Summarise Q3 spend\",\"label\":\"User request\",\"spanId\":\"00000000000000a1\",\"startedAt\":\"2026-07-25T09:00:00.000Z\",\"tokens\":0,\"type\":\"user_input\"}",
+        "hashPreimage": "{\"cost\":0,\"durationMs\":0,\"id\":\"vec-min:0\",\"index\":0,\"input\":\"Summarise Q3 spend\",\"label\":\"User request\",\"spanId\":\"00000000000000a1\",\"startedAt\":\"2026-07-25T09:00:00.000Z\",\"tokens\":0,\"type\":\"user_input\"}",
+        "hash": "00cfe8d49e5f804f9a86be29594aae555a8cd7e130d99ffff5a14595fdd326c6"
+      },
+      {
+        "id": "vec-min:1",
+        "index": 1,
+        "prevHash": "00cfe8d49e5f804f9a86be29594aae555a8cd7e130d99ffff5a14595fdd326c6",
+        "canonicalStep": "{\"cost\":4.7,\"durationMs\":5000,\"id\":\"vec-min:1\",\"index\":1,\"label\":\"Answer\",\"output\":{\"text\":\"Q3 spend was 4.7 lakh.\"},\"parentSpanId\":\"00000000000000a1\",\"spanId\":\"00000000000000a2\",\"startedAt\":\"2026-07-25T09:00:05.000Z\",\"tokens\":1280,\"type\":\"final_output\"}",
+        "hashPreimage": "{\"cost\":4.7,\"durationMs\":5000,\"id\":\"vec-min:1\",\"index\":1,\"label\":\"Answer\",\"output\":{\"text\":\"Q3 spend was 4.7 lakh.\"},\"parentSpanId\":\"00000000000000a1\",\"spanId\":\"00000000000000a2\",\"startedAt\":\"2026-07-25T09:00:05.000Z\",\"tokens\":1280,\"type\":\"final_output\"}00cfe8d49e5f804f9a86be29594aae555a8cd7e130d99ffff5a14595fdd326c6",
+        "hash": "d2c9a3c320ed186a730eeeae371da2ec9ce10d0301584499326fc21ecb58113a"
+      }
+    ],
+    "committed": [
+      {
+        "id": "vec-cm:0",
+        "index": 0,
+        "prevHash": "",
+        "canonicalStep": "{\"cost\":0.000025,\"durationMs\":120,\"id\":\"vec-cm:0\",\"index\":0,\"input\":{\"input.empties.arr\":\"1bb6d01ca8935f1b8405276f77a60c7bf4b5727916108f2ab8ec3991fab55618\",\"input.empties.obj\":\"6d27b20f08e37b2de277e7bf9325ae8fece86b3d002abfdff761907209ce486f\",\"input.numbers.big\":\"079d35bd8d65c7848c57c47691887f084b14aeaa30a6a727c3fe05a2e9d5c6db\",\"input.numbers.cost\":\"c5e7bc490ecb20d0179f71584f1a1e23af89d81c0fb553f20a268b1ad13b15f5\",\"input.numbers.drift\":\"6a59b99f70e555b39f7685f3bba51853c528beb3b91aa57264fc8ae4fb60ccb3\",\"input.numbers.micro\":\"1a19f78030485e29bd8db3806e5c9ec4bded75cf2eb22928312d39ef3ab27f00\",\"input.query\":\"26fa090bbad7fc900814161617f264ada153349c608c256594fac18827b447de\",\"input.rows[0].id\":\"7b7bb6831751f479fe1f7661fc9cf58c4c7459a2427b9000ba953bb12b7d6bd8\",\"input.rows[1].id\":\"43d371e87dbb32f25fe50a1ac8d5e3c7ae027c090543d179972ab40c9aad1522\",\"input.unicode.emoji\":\"e0105ca56a27bf5103d4de5b3a6986ccba54f485664dfb3f66108d6772fba5fd\",\"input.unicode.nfc\":\"01afa30cbe2a69d3c2f715af9e1b73a81fbda31a5d8f36e8fc55f39315a2a37f\",\"input.unicode.nfd\":\"c972fd20984658de37e3e7ace080c72df25f054881361e70446d2572f1055539\"},\"label\":\"Tool: db_query\",\"output\":{\"output.note\":\"92a4348c93bb5025b0ad0f818a46052668ef8dcc844018f7a4af7723e3a05ab8\",\"output.ok\":\"c8c3aa0b507467b589241250b20abb9846da214bde8cd6b6332fa49032c3241d\"},\"spanId\":\"00000000000000b1\",\"startedAt\":\"2026-07-25T09:00:00.000Z\",\"tokens\":0,\"toolName\":\"db_query\",\"type\":\"tool_call\"}",
+        "hashPreimage": "{\"cost\":0.000025,\"durationMs\":120,\"id\":\"vec-cm:0\",\"index\":0,\"input\":{\"input.empties.arr\":\"1bb6d01ca8935f1b8405276f77a60c7bf4b5727916108f2ab8ec3991fab55618\",\"input.empties.obj\":\"6d27b20f08e37b2de277e7bf9325ae8fece86b3d002abfdff761907209ce486f\",\"input.numbers.big\":\"079d35bd8d65c7848c57c47691887f084b14aeaa30a6a727c3fe05a2e9d5c6db\",\"input.numbers.cost\":\"c5e7bc490ecb20d0179f71584f1a1e23af89d81c0fb553f20a268b1ad13b15f5\",\"input.numbers.drift\":\"6a59b99f70e555b39f7685f3bba51853c528beb3b91aa57264fc8ae4fb60ccb3\",\"input.numbers.micro\":\"1a19f78030485e29bd8db3806e5c9ec4bded75cf2eb22928312d39ef3ab27f00\",\"input.query\":\"26fa090bbad7fc900814161617f264ada153349c608c256594fac18827b447de\",\"input.rows[0].id\":\"7b7bb6831751f479fe1f7661fc9cf58c4c7459a2427b9000ba953bb12b7d6bd8\",\"input.rows[1].id\":\"43d371e87dbb32f25fe50a1ac8d5e3c7ae027c090543d179972ab40c9aad1522\",\"input.unicode.emoji\":\"e0105ca56a27bf5103d4de5b3a6986ccba54f485664dfb3f66108d6772fba5fd\",\"input.unicode.nfc\":\"01afa30cbe2a69d3c2f715af9e1b73a81fbda31a5d8f36e8fc55f39315a2a37f\",\"input.unicode.nfd\":\"c972fd20984658de37e3e7ace080c72df25f054881361e70446d2572f1055539\"},\"label\":\"Tool: db_query\",\"output\":{\"output.note\":\"92a4348c93bb5025b0ad0f818a46052668ef8dcc844018f7a4af7723e3a05ab8\",\"output.ok\":\"c8c3aa0b507467b589241250b20abb9846da214bde8cd6b6332fa49032c3241d\"},\"spanId\":\"00000000000000b1\",\"startedAt\":\"2026-07-25T09:00:00.000Z\",\"tokens\":0,\"toolName\":\"db_query\",\"type\":\"tool_call\"}",
+        "hash": "63f138b78374b62e86ed13cd3d2492b46914db1b5c50553e0b4ae315c6da8766"
+      }
+    ],
+    "redacted": [
+      {
+        "id": "vec-cm:0",
+        "index": 0,
+        "prevHash": "",
+        "canonicalStep": "{\"cost\":0.000025,\"durationMs\":120,\"id\":\"vec-cm:0\",\"index\":0,\"input\":{\"input.empties.arr\":\"1bb6d01ca8935f1b8405276f77a60c7bf4b5727916108f2ab8ec3991fab55618\",\"input.empties.obj\":\"6d27b20f08e37b2de277e7bf9325ae8fece86b3d002abfdff761907209ce486f\",\"input.numbers.big\":\"079d35bd8d65c7848c57c47691887f084b14aeaa30a6a727c3fe05a2e9d5c6db\",\"input.numbers.cost\":\"c5e7bc490ecb20d0179f71584f1a1e23af89d81c0fb553f20a268b1ad13b15f5\",\"input.numbers.drift\":\"6a59b99f70e555b39f7685f3bba51853c528beb3b91aa57264fc8ae4fb60ccb3\",\"input.numbers.micro\":\"1a19f78030485e29bd8db3806e5c9ec4bded75cf2eb22928312d39ef3ab27f00\",\"input.query\":\"26fa090bbad7fc900814161617f264ada153349c608c256594fac18827b447de\",\"input.rows[0].id\":\"7b7bb6831751f479fe1f7661fc9cf58c4c7459a2427b9000ba953bb12b7d6bd8\",\"input.rows[1].id\":\"43d371e87dbb32f25fe50a1ac8d5e3c7ae027c090543d179972ab40c9aad1522\",\"input.unicode.emoji\":\"e0105ca56a27bf5103d4de5b3a6986ccba54f485664dfb3f66108d6772fba5fd\",\"input.unicode.nfc\":\"01afa30cbe2a69d3c2f715af9e1b73a81fbda31a5d8f36e8fc55f39315a2a37f\",\"input.unicode.nfd\":\"c972fd20984658de37e3e7ace080c72df25f054881361e70446d2572f1055539\"},\"label\":\"Tool: db_query\",\"output\":{\"output.note\":\"92a4348c93bb5025b0ad0f818a46052668ef8dcc844018f7a4af7723e3a05ab8\",\"output.ok\":\"c8c3aa0b507467b589241250b20abb9846da214bde8cd6b6332fa49032c3241d\"},\"spanId\":\"00000000000000b1\",\"startedAt\":\"2026-07-25T09:00:00.000Z\",\"tokens\":0,\"toolName\":\"db_query\",\"type\":\"tool_call\"}",
+        "hashPreimage": "{\"cost\":0.000025,\"durationMs\":120,\"id\":\"vec-cm:0\",\"index\":0,\"input\":{\"input.empties.arr\":\"1bb6d01ca8935f1b8405276f77a60c7bf4b5727916108f2ab8ec3991fab55618\",\"input.empties.obj\":\"6d27b20f08e37b2de277e7bf9325ae8fece86b3d002abfdff761907209ce486f\",\"input.numbers.big\":\"079d35bd8d65c7848c57c47691887f084b14aeaa30a6a727c3fe05a2e9d5c6db\",\"input.numbers.cost\":\"c5e7bc490ecb20d0179f71584f1a1e23af89d81c0fb553f20a268b1ad13b15f5\",\"input.numbers.drift\":\"6a59b99f70e555b39f7685f3bba51853c528beb3b91aa57264fc8ae4fb60ccb3\",\"input.numbers.micro\":\"1a19f78030485e29bd8db3806e5c9ec4bded75cf2eb22928312d39ef3ab27f00\",\"input.query\":\"26fa090bbad7fc900814161617f264ada153349c608c256594fac18827b447de\",\"input.rows[0].id\":\"7b7bb6831751f479fe1f7661fc9cf58c4c7459a2427b9000ba953bb12b7d6bd8\",\"input.rows[1].id\":\"43d371e87dbb32f25fe50a1ac8d5e3c7ae027c090543d179972ab40c9aad1522\",\"input.unicode.emoji\":\"e0105ca56a27bf5103d4de5b3a6986ccba54f485664dfb3f66108d6772fba5fd\",\"input.unicode.nfc\":\"01afa30cbe2a69d3c2f715af9e1b73a81fbda31a5d8f36e8fc55f39315a2a37f\",\"input.unicode.nfd\":\"c972fd20984658de37e3e7ace080c72df25f054881361e70446d2572f1055539\"},\"label\":\"Tool: db_query\",\"output\":{\"output.note\":\"92a4348c93bb5025b0ad0f818a46052668ef8dcc844018f7a4af7723e3a05ab8\",\"output.ok\":\"c8c3aa0b507467b589241250b20abb9846da214bde8cd6b6332fa49032c3241d\"},\"spanId\":\"00000000000000b1\",\"startedAt\":\"2026-07-25T09:00:00.000Z\",\"tokens\":0,\"toolName\":\"db_query\",\"type\":\"tool_call\"}",
+        "hash": "63f138b78374b62e86ed13cd3d2492b46914db1b5c50553e0b4ae315c6da8766"
+      }
+    ]
+  }
+}

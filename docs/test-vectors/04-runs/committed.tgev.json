@@ -1,0 +1,99 @@
+{
+  "formatVersion": 1,
+  "exportedAt": "2026-07-25T09:00:00.000Z",
+  "run": {
+    "id": "vec-cm",
+    "name": "committed run",
+    "startedAt": "2026-07-25T09:00:00.000Z",
+    "endedAt": "2026-07-25T09:00:10.000Z",
+    "status": "completed",
+    "currency": "INR",
+    "totals": {
+      "tokens": 0,
+      "cost": 0.000025,
+      "durationMs": 120,
+      "steps": 1
+    },
+    "warnings": [],
+    "steps": [
+      {
+        "id": "vec-cm:0",
+        "runId": "vec-cm",
+        "index": 0,
+        "type": "tool_call",
+        "label": "Tool: db_query",
+        "startedAt": "2026-07-25T09:00:00.000Z",
+        "durationMs": 120,
+        "tokens": 0,
+        "cost": 0.000025,
+        "toolName": "db_query",
+        "input": {
+          "query": "SELECT * FROM payments WHERE id = 42",
+          "unicode": {
+            "nfc": "café",
+            "nfd": "café",
+            "emoji": "👩‍🚀"
+          },
+          "empties": {
+            "obj": {},
+            "arr": []
+          },
+          "numbers": {
+            "cost": 4.7,
+            "micro": 0.000025,
+            "big": 9007199254740991,
+            "drift": 0.30000000000000004
+          },
+          "rows": [
+            {
+              "id": 1
+            },
+            {
+              "id": 2
+            }
+          ]
+        },
+        "output": {
+          "ok": true,
+          "note": null
+        },
+        "spanId": "00000000000000b1",
+        "commitments": {
+          "input.query": "26fa090bbad7fc900814161617f264ada153349c608c256594fac18827b447de",
+          "input.unicode.nfc": "01afa30cbe2a69d3c2f715af9e1b73a81fbda31a5d8f36e8fc55f39315a2a37f",
+          "input.unicode.nfd": "c972fd20984658de37e3e7ace080c72df25f054881361e70446d2572f1055539",
+          "input.unicode.emoji": "e0105ca56a27bf5103d4de5b3a6986ccba54f485664dfb3f66108d6772fba5fd",
+          "input.empties.obj": "6d27b20f08e37b2de277e7bf9325ae8fece86b3d002abfdff761907209ce486f",
+          "input.empties.arr": "1bb6d01ca8935f1b8405276f77a60c7bf4b5727916108f2ab8ec3991fab55618",
+          "input.numbers.cost": "c5e7bc490ecb20d0179f71584f1a1e23af89d81c0fb553f20a268b1ad13b15f5",
+          "input.numbers.micro": "1a19f78030485e29bd8db3806e5c9ec4bded75cf2eb22928312d39ef3ab27f00",
+          "input.numbers.big": "079d35bd8d65c7848c57c47691887f084b14aeaa30a6a727c3fe05a2e9d5c6db",
+          "input.numbers.drift": "6a59b99f70e555b39f7685f3bba51853c528beb3b91aa57264fc8ae4fb60ccb3",
+          "input.rows[0].id": "7b7bb6831751f479fe1f7661fc9cf58c4c7459a2427b9000ba953bb12b7d6bd8",
+          "input.rows[1].id": "43d371e87dbb32f25fe50a1ac8d5e3c7ae027c090543d179972ab40c9aad1522",
+          "output.ok": "c8c3aa0b507467b589241250b20abb9846da214bde8cd6b6332fa49032c3241d",
+          "output.note": "92a4348c93bb5025b0ad0f818a46052668ef8dcc844018f7a4af7723e3a05ab8"
+        },
+        "salts": {
+          "input.query": "62849489c3a0dfa599b7720ed503ee8e",
+          "input.unicode.nfc": "0100e4c869bfafec4fe5fea5bed03e01",
+          "input.unicode.nfd": "bf851dc72c2417341744b9f70fb17ec4",
+          "input.unicode.emoji": "3d03d7556703262576c28f9ac52ddff3",
+          "input.empties.obj": "91cd6d9ea40d66076f895472d8d1f12b",
+          "input.empties.arr": "db3c60f095c01d4b426d69b493dce4b2",
+          "input.numbers.cost": "824c3cdb4b96c55bb7b4d51662b090ab",
+          "input.numbers.micro": "431dd7cc95c5230910db4696940aad21",
+          "input.numbers.big": "a0f5cf2f2f75749ef8426a47d6261ba0",
+          "input.numbers.drift": "973289fd8c20d0e2e229dc012ad625e9",
+          "input.rows[0].id": "f22c78dc0934b7a418a92e3359af936b",
+          "input.rows[1].id": "d4a754a47e38f0a262bf00bceaf42c4a",
+          "output.ok": "0e0ce0947b0302517d5b9c02aef7f9fe",
+          "output.note": "5c0a2389765c1b41ab104c8dd59b612b"
+        },
+        "prevHash": "",
+        "hash": "63f138b78374b62e86ed13cd3d2492b46914db1b5c50553e0b4ae315c6da8766"
+      }
+    ],
+    "runHash": "63f138b78374b62e86ed13cd3d2492b46914db1b5c50553e0b4ae315c6da8766"
+  }
+}
