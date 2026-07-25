@@ -14,11 +14,8 @@ Preferred: use GitHub's private vulnerability reporting on this repository
 (Security → Report a vulnerability). It creates a private thread with the
 maintainers and needs no coordination over email.
 
-<!-- TODO(maintainer): fill in a security contact address before publishing this
-     file, or delete this block and rely on GitHub private reporting alone. -->
-
-Alternative: email `<SECURITY-CONTACT-NOT-YET-SET>`. If you would rather encrypt
-the report, say so in a first message with no details and we will exchange keys.
+Alternative: email `rhlbhrdwj3@gmail.com`. If you would rather encrypt the
+report, say so in a first message with no details and we will exchange keys.
 
 ### What to include
 
