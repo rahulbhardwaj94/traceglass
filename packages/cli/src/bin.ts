@@ -37,7 +37,7 @@ import {
   type SessionInfo,
 } from '@traceglass/core';
 import { dataDir, storePath } from './paths.js';
-import { startServe, startServer } from './server.js';
+import { DEFAULT_BODY_LIMIT, DEFAULT_RATE_LIMIT, startServe, startServer } from './server.js';
 import { openBrowser } from './open-browser.js';
 import { generateKeys, maybeSign } from './keys.js';
 import { FileAnchorSink, anchorRecordForRun, defaultAnchorsPath } from './anchors.js';
@@ -71,6 +71,30 @@ function friendly(e: unknown): string {
 function die(message: string): never {
   console.error(`✗ ${message}`);
   process.exit(1);
+}
+
+/**
+ * Parse a numeric flag (or its env fallback), refusing junk loudly. A limit
+ * silently coerced to NaN would leave the operator believing a cap is in place.
+ */
+function numericOption(
+  raw: string | undefined,
+  flag: string,
+  bounds: { min: number },
+): number | undefined {
+  if (raw === undefined || raw === '') return undefined;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < bounds.min) {
+    return die(`${flag} must be a number ≥ ${bounds.min} (got "${raw}").`);
+  }
+  return value;
+}
+
+/** Render a byte count for humans reading vacuum output. */
+function humanBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
 }
 
 /** Ingest a trace file into the store (idempotent on a run id already present). */
@@ -374,68 +398,109 @@ program
     '--retain <days>',
     'delete runs older than this many days (audited); default: keep forever',
   )
-  .action(async (opts: { port: string; host: string; token?: string; retain?: string }) => {
-    const store = openStore();
-    const token = opts.token ?? process.env.TRACEGLASS_TOKEN;
-    const retainDays = opts.retain !== undefined ? Number(opts.retain) : null;
-    if (retainDays !== null && (!Number.isFinite(retainDays) || retainDays <= 0)) {
-      return die('--retain must be a positive number of days.');
-    }
-
-    const auditPath = join(dataDir(), 'audit.jsonl');
-    const sweep = () => {
-      if (retainDays === null) return;
-      const cutoff = new Date(Date.now() - retainDays * 24 * 60 * 60 * 1000).toISOString();
-      const pruned = store.pruneOlderThan(cutoff);
-      if (pruned.length > 0) {
-        const now = new Date().toISOString();
-        const lines = pruned
-          .map((p) => JSON.stringify({ ...p, prunedAt: now, reason: 'retention', retainDays }))
-          .join('\n');
-        appendFileSync(auditPath, lines + '\n');
-        console.log(
-          `Retention: pruned ${pruned.length} run(s) older than ${retainDays}d (audited → ${auditPath}).`,
-        );
+  .option(
+    '--body-limit <mib>',
+    'largest accepted request body in MiB (or set TRACEGLASS_BODY_LIMIT)',
+  )
+  .option(
+    '--rate-limit <n>',
+    'ingest requests per minute per client, 0 to disable (or set TRACEGLASS_RATE_LIMIT)',
+  )
+  .action(
+    async (opts: {
+      port: string;
+      host: string;
+      token?: string;
+      retain?: string;
+      bodyLimit?: string;
+      rateLimit?: string;
+    }) => {
+      const store = openStore();
+      const token = opts.token ?? process.env.TRACEGLASS_TOKEN;
+      const retainDays = opts.retain !== undefined ? Number(opts.retain) : null;
+      if (retainDays !== null && (!Number.isFinite(retainDays) || retainDays <= 0)) {
+        return die('--retain must be a positive number of days.');
       }
-    };
 
-    let server;
-    try {
-      server = await startServe(store, {
-        port: Number(opts.port),
-        host: opts.host,
-        token,
-        signer: maybeSign,
-      });
-    } catch (e) {
-      return die(friendly(e));
-    }
-    sweep();
-    const timer = retainDays !== null ? setInterval(sweep, 6 * 60 * 60 * 1000) : null;
+      const bodyLimitMib = numericOption(
+        opts.bodyLimit ?? process.env.TRACEGLASS_BODY_LIMIT,
+        '--body-limit',
+        { min: 1 },
+      );
+      const rateLimit = numericOption(
+        opts.rateLimit ?? process.env.TRACEGLASS_RATE_LIMIT,
+        '--rate-limit',
+        { min: 0 },
+      );
+      const bodyLimit = bodyLimitMib !== undefined ? bodyLimitMib * 1024 * 1024 : undefined;
 
-    console.log(`\n  traceglass collector → ${server.url}`);
-    console.log(`  Dashboard: ${server.url}/?picker=1`);
-    console.log(`  Ingest:    curl -X POST ${server.url}/api/ingest \\`);
-    console.log(
-      `               -H 'content-type: application/json' ${token ? `-H "Authorization: Bearer $TRACEGLASS_TOKEN" ` : ''}\\`,
-    );
-    console.log(`               --data @trace.json`);
-    console.log(`  OTLP/HTTP: POST ${server.url}/v1/traces`);
-    console.log(
-      `  Auth:      ${token ? 'bearer token required on POST' : 'loopback only, no token set'}`,
-    );
-    console.log(
-      `  Retention: ${retainDays !== null ? `${retainDays} days (audited deletions)` : 'keep forever'}\n`,
-    );
-    console.log('  Press Ctrl+C to stop.\n');
+      const auditPath = join(dataDir(), 'audit.jsonl');
+      const sweep = () => {
+        if (retainDays === null) return;
+        const cutoff = new Date(Date.now() - retainDays * 24 * 60 * 60 * 1000).toISOString();
+        const pruned = store.pruneOlderThan(cutoff);
+        if (pruned.length > 0) {
+          const now = new Date().toISOString();
+          const lines = pruned
+            .map((p) => JSON.stringify({ ...p, prunedAt: now, reason: 'retention', retainDays }))
+            .join('\n');
+          appendFileSync(auditPath, lines + '\n');
+          console.log(
+            `Retention: pruned ${pruned.length} run(s) older than ${retainDays}d (audited → ${auditPath}).`,
+          );
+        }
+      };
 
-    const shutdown = () => {
-      if (timer) clearInterval(timer);
-      server.close().finally(() => process.exit(0));
-    };
-    process.on('SIGINT', shutdown);
-    process.on('SIGTERM', shutdown);
-  });
+      let server;
+      try {
+        server = await startServe(store, {
+          port: Number(opts.port),
+          host: opts.host,
+          token,
+          signer: maybeSign,
+          ...(bodyLimit !== undefined ? { bodyLimit } : {}),
+          ...(rateLimit !== undefined ? { rateLimit } : {}),
+        });
+      } catch (e) {
+        return die(friendly(e));
+      }
+      sweep();
+      const timer = retainDays !== null ? setInterval(sweep, 6 * 60 * 60 * 1000) : null;
+
+      const effectiveBodyLimit = bodyLimit ?? DEFAULT_BODY_LIMIT;
+      const effectiveRateLimit = rateLimit ?? DEFAULT_RATE_LIMIT;
+
+      console.log(`\n  traceglass collector → ${server.url}`);
+      console.log(`  Dashboard: ${server.url}/?picker=1`);
+      console.log(`  Ingest:    curl -X POST ${server.url}/api/ingest \\`);
+      console.log(
+        `               -H 'content-type: application/json' ${token ? `-H "Authorization: Bearer $TRACEGLASS_TOKEN" ` : ''}\\`,
+      );
+      console.log(`               --data @trace.json`);
+      console.log(`  OTLP/HTTP: POST ${server.url}/v1/traces`);
+      console.log(
+        `  Auth:      ${token ? 'bearer token required on POST' : 'loopback only, no token set'}`,
+      );
+      console.log(
+        `  Retention: ${retainDays !== null ? `${retainDays} days (audited deletions)` : 'keep forever'}`,
+      );
+      console.log(
+        `  Limits:    ${(effectiveBodyLimit / (1024 * 1024)).toFixed(0)} MiB per request · ${
+          effectiveRateLimit > 0
+            ? `${effectiveRateLimit} ingests/min per client`
+            : 'rate limiting OFF'
+        }\n`,
+      );
+      console.log('  Press Ctrl+C to stop.\n');
+
+      const shutdown = () => {
+        if (timer) clearInterval(timer);
+        server.close().finally(() => process.exit(0));
+      };
+      process.on('SIGINT', shutdown);
+      process.on('SIGTERM', shutdown);
+    },
+  );
 
 program
   .command('tail')
@@ -789,6 +854,43 @@ program
       store.close();
     },
   );
+
+program
+  .command('vacuum')
+  .description(
+    'Purge freed pages so redacted and pruned values cannot be read back out of the store file',
+  )
+  .option('--json', 'machine-readable output')
+  .action((opts: { json?: boolean }) => {
+    const store = openStore();
+    let result;
+    try {
+      result = store.vacuum();
+    } catch (e) {
+      store.close();
+      return die(`Vacuum failed: ${friendly(e)}`);
+    }
+    const runs = store.listRuns().length;
+    store.close();
+
+    if (opts.json) {
+      console.log(JSON.stringify({ ...result, schemaVersion: store.schemaVersion, runs }, null, 2));
+      return;
+    }
+    console.log(`Vacuumed ${result.path}`);
+    console.log(`  schema version: ${store.schemaVersion}`);
+    console.log(`  runs kept:      ${runs} (vacuum never removes a run)`);
+    console.log(
+      `  file size:      ${humanBytes(result.bytesBefore)} → ${humanBytes(result.bytesAfter)}` +
+        (result.reclaimed > 0
+          ? ` (${humanBytes(result.reclaimed)} reclaimed)`
+          : ' (nothing to reclaim)'),
+    );
+    console.log(
+      '\n  Freed pages are gone: a value removed by `redact` or `serve --retain` can no\n' +
+        '  longer be recovered from the file. Safe to run again any time.',
+    );
+  });
 
 program
   .command('export')

@@ -1,4 +1,5 @@
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { Readable } from 'node:stream';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -286,6 +287,153 @@ describe('serve mode: token auth + collector ingest (v0.3)', () => {
       payload: { nonsense: true },
     });
     expect(res.statusCode).toBe(400);
+    await a.close();
+    s.close();
+  });
+
+  it('an oversized body is rejected with 413 naming the limit and the flag', async () => {
+    const s = new RunStore(':memory:');
+    const a = buildServer(s, { token: 't', enableIngest: true, bodyLimit: 2048 });
+    await a.ready();
+
+    const tooBig = { id: 'x', name: 'x', steps: [], filler: 'a'.repeat(4096) };
+    const res = await a.inject({
+      method: 'POST',
+      url: '/api/ingest',
+      headers: { authorization: 'Bearer t', 'content-type': 'application/json' },
+      payload: tooBig,
+    });
+    expect(res.statusCode).toBe(413);
+    const body = res.json() as { error: string; message: string; limitBytes: number };
+    expect(body.error).toBe('payload too large');
+    expect(body.message).toContain('--body-limit');
+    expect(body.limitBytes).toBe(2048);
+
+    // A body inside the limit is unaffected (this one fails validation, at 400).
+    const small = await a.inject({
+      method: 'POST',
+      url: '/api/ingest',
+      headers: { authorization: 'Bearer t', 'content-type': 'application/json' },
+      payload: { nonsense: true },
+    });
+    expect(small.statusCode).toBe(400);
+    await a.close();
+    s.close();
+  });
+
+  it('a body with no declared length still hits the parser backstop (413)', async () => {
+    // Chunked uploads carry no content-length, so the cheap early check cannot
+    // see them coming. Fastify's own bodyLimit has to catch these.
+    const s = new RunStore(':memory:');
+    const a = buildServer(s, { token: 't', enableIngest: true, bodyLimit: 2048 });
+    await a.ready();
+
+    const chunked = Readable.from([
+      Buffer.from('{"pad":"'),
+      Buffer.from('a'.repeat(8192)),
+      Buffer.from('"}'),
+    ]);
+    const res = await a.inject({
+      method: 'POST',
+      url: '/api/ingest',
+      headers: {
+        authorization: 'Bearer t',
+        'content-type': 'application/json',
+        'transfer-encoding': 'chunked',
+      },
+      payload: chunked,
+    });
+    expect(res.statusCode).toBe(413);
+    expect((res.json() as { error: string }).error).toBe('payload too large');
+    await a.close();
+    s.close();
+  });
+
+  it('floods the ingest routes get 429 with retry-after; reads are untouched', async () => {
+    const s = new RunStore(':memory:');
+    const a = buildServer(s, { token: 't', enableIngest: true, rateLimit: 3 });
+    await a.ready();
+
+    const post = () =>
+      a.inject({
+        method: 'POST',
+        url: '/api/ingest',
+        headers: { authorization: 'Bearer t', 'content-type': 'application/json' },
+        payload: nativeBody,
+      });
+
+    const codes: number[] = [];
+    for (let i = 0; i < 5; i++) codes.push((await post()).statusCode);
+    expect(codes.slice(0, 3).every((c) => c === 200)).toBe(true);
+    expect(codes.slice(3)).toEqual([429, 429]);
+
+    const limited = await post();
+    expect(limited.statusCode).toBe(429);
+    expect(Number(limited.headers['retry-after'])).toBeGreaterThan(0);
+    expect(limited.headers['x-ratelimit-limit']).toBe('3');
+    const body = limited.json() as { error: string; message: string; limit: number };
+    expect(body.error).toBe('too many requests');
+    expect(body.message).toContain('3 requests per minute');
+
+    // GET routes are not rate limited — a throttled collector must not blind
+    // the dashboard someone is using to look at the runs already stored.
+    for (let i = 0; i < 10; i++) {
+      expect((await a.inject({ method: 'GET', url: '/api/runs' })).statusCode).toBe(200);
+    }
+    await a.close();
+    s.close();
+  });
+
+  it('rate limiting keys off the matched route, so an encoded path cannot dodge it', async () => {
+    const s = new RunStore(':memory:');
+    const a = buildServer(s, { token: 't', enableIngest: true, rateLimit: 2 });
+    await a.ready();
+    const send = (url: string) =>
+      a.inject({
+        method: 'POST',
+        url,
+        headers: { authorization: 'Bearer t', 'content-type': 'application/json' },
+        payload: nativeBody,
+      });
+    await send('/api/ingest');
+    await send('/api/ingest');
+    // "/%61pi/ingest" routes to the same handler; it must land in the same bucket.
+    expect((await send('/%61pi/ingest')).statusCode).toBe(429);
+    await a.close();
+    s.close();
+  });
+
+  it('rateLimit: 0 disables the limiter entirely', async () => {
+    const s = new RunStore(':memory:');
+    const a = buildServer(s, { token: 't', enableIngest: true, rateLimit: 0 });
+    await a.ready();
+    for (let i = 0; i < 12; i++) {
+      const res = await a.inject({
+        method: 'POST',
+        url: '/api/ingest',
+        headers: { authorization: 'Bearer t', 'content-type': 'application/json' },
+        payload: nativeBody,
+      });
+      expect(res.statusCode).toBe(200);
+    }
+    await a.close();
+    s.close();
+  });
+
+  it('the limiter does not weaken auth: a tokenless POST is still 401', async () => {
+    const s = new RunStore(':memory:');
+    const a = buildServer(s, { token: 't', enableIngest: true, rateLimit: 100 });
+    await a.ready();
+    expect(
+      (
+        await a.inject({
+          method: 'POST',
+          url: '/api/ingest',
+          headers: { 'content-type': 'application/json' },
+          payload: nativeBody,
+        })
+      ).statusCode,
+    ).toBe(401);
     await a.close();
     s.close();
   });
