@@ -67,12 +67,37 @@ export function parsePolicy(value: unknown): Policy {
   return PolicySchema.parse(value);
 }
 
+/**
+ * Fold a tool name to its matching form.
+ *
+ * A guardrail is only as good as the spelling it insists on. Raw UTF-16
+ * comparison let "Payments.Refund", " payments.refund", and a name carrying a
+ * zero-width space all walk past a `forbidTools: ['payments.refund']` rule —
+ * the rule read as enforced and stopped nothing. Normalising both sides closes
+ * the trivial evasions: NFKC folds compatibility forms, the strip removes
+ * zero-width and bidi controls that render identically to nothing, and the
+ * case/whitespace fold covers the rest.
+ *
+ * This deliberately errs toward matching MORE: a false positive on a guardrail
+ * is a blocked run somebody investigates, while a false negative is the
+ * forbidden tool running unnoticed.
+ */
+function foldToolName(name: string): string {
+  return name
+    .normalize('NFKC')
+    .replace(/[\u200B-\u200F\u2060\uFEFF]/g, '')
+    .trim()
+    .toLowerCase();
+}
+
 /** Match a tool name against a pattern with one optional leading/trailing `*`. */
 export function toolMatches(toolName: string, pattern: string): boolean {
-  if (pattern === '*') return true;
-  if (pattern.startsWith('*')) return toolName.endsWith(pattern.slice(1));
-  if (pattern.endsWith('*')) return toolName.startsWith(pattern.slice(0, -1));
-  return toolName === pattern;
+  const name = foldToolName(toolName);
+  const pat = foldToolName(pattern);
+  if (pat === '*') return true;
+  if (pat.startsWith('*')) return name.endsWith(pat.slice(1));
+  if (pat.endsWith('*')) return name.startsWith(pat.slice(0, -1));
+  return name === pat;
 }
 
 function toolSteps(run: Run): Step[] {

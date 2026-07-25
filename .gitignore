@@ -20,3 +20,6 @@ dist/
 
 # Local Claude Code settings (machine-specific, not shared)
 .claude/settings.local.json
+
+# Agent worktrees and local Claude Code state
+.claude/
