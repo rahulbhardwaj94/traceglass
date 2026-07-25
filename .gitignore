@@ -3,8 +3,19 @@ dist/
 *.tsbuildinfo
 *.log
 .traceglass/
+
+# Trace store and every sidecar SQLite can create alongside it. The store has
+# run in WAL mode since v0.3, so -wal and -shm hold recent trace payloads
+# (including any PII not yet redacted) that are NOT in the .sqlite file itself.
+# -journal is the older rollback-journal name, kept for pre-WAL stores.
 *.sqlite
+*.sqlite-wal
+*.sqlite-shm
 *.sqlite-journal
+
+# Exported evidence bundles carry full run payloads.
+*.tgev
+
 .DS_Store
 
 # Local Claude Code settings (machine-specific, not shared)

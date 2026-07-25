@@ -1,0 +1,188 @@
+name: CI
+
+# Why a schedule as well as push/PR: advisories are published against code that
+# has not changed. Two dependency CVEs (fastify transitives, @fastify/static)
+# shipped in published traceglass releases because nothing re-audited the tree
+# between commits. The nightly run is what catches that class of problem.
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+  schedule:
+    - cron: '17 6 * * *' # daily, 06:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Fail fast on a corrupt/partial registry response rather than retrying forever.
+  NPM_CONFIG_FUND: 'false'
+  NPM_CONFIG_AUDIT: 'false'
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # The gate that would have caught both shipped CVEs on day one.
+  # ---------------------------------------------------------------------------
+  audit:
+    name: audit (production deps)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # HARD FAILURE. This is the whole point of the job: only the production
+      # dependency tree gates a release. Anything at 'low' or above fails.
+      - name: npm audit --omit=dev
+        run: npm audit --omit=dev --audit-level=low
+
+      # Informational only, never gates. The dev tree carries known vite/esbuild
+      # advisories; @traceglass/web is private and vite is a devDependency, so
+      # none of it reaches a published tarball. Surfaced so it stays visible.
+      - name: npm audit (full tree, informational)
+        if: always()
+        continue-on-error: true
+        run: npm audit
+
+  # ---------------------------------------------------------------------------
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      # Build first so type-aware rules resolve @traceglass/* through the real
+      # dist/*.d.ts. Without it the cross-package imports degrade to `any` and
+      # the typed rules quietly analyse less than they appear to.
+      - run: npm run build
+
+      - run: npm run lint
+
+      # Informational until the tree is clean. 9 files currently fail
+      # (core/pipeline.ts, web/lib/derive.ts, web/styles.css, three web
+      # components, three test files). Run `npm run format`, commit the result,
+      # then delete continue-on-error to make formatting a real gate.
+      - name: prettier formatting check
+        continue-on-error: true
+        run: npx prettier --check "packages/**/*.{ts,tsx,json,css}"
+
+  # ---------------------------------------------------------------------------
+  test:
+    name: test (node ${{ matrix.node }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: [20, 22, 24]
+
+    # bash everywhere (git-bash on Windows) so one command form works on all
+    # three runners.
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      # better-sqlite3 11.10.0 publishes node prebuilds for ABI 108/115/127/131
+      # (Node 18/20/22/23) only. Node 24 is ABI 137, so every Node 24 leg
+      # compiles the native addon from source via node-gyp. The GitHub runners
+      # all ship a working toolchain, but it is slow and it is the most likely
+      # place for this matrix to break.
+      - run: npm ci
+
+      - run: npm run build
+      - run: npm run typecheck
+      - run: npm test
+
+      # The real outcome proof: keygen -> record -> verify -> serve -> export ->
+      # offline verify -> tamper-detect, against the built CLI.
+      - name: outcome check (e2e)
+        run: node scripts/e2e-check.mjs
+
+  # ---------------------------------------------------------------------------
+  # Publish is gated on a v* tag AND on every other job passing, so a published
+  # tarball can never disagree with the tag or the commit it was built from.
+  #
+  # It is deliberately NOT self-arming: without an NPM_TOKEN secret the job
+  # fails at the token guard instead of silently doing nothing. Set the secret
+  # (and, if you want manual sign-off, protect the `npm-publish` environment)
+  # to turn it on.
+  # ---------------------------------------------------------------------------
+  publish:
+    name: publish to npm
+    needs: [audit, lint, test]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: npm-publish
+    permissions:
+      contents: read
+      id-token: write # npm provenance attestation
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: 'https://registry.npmjs.org'
+
+      - run: npm ci
+      - run: npm run build
+
+      # Refuse to publish a tree whose package versions disagree with the tag.
+      - name: tag must match package versions
+        run: node .github/scripts/check-tag-version.mjs "${GITHUB_REF_NAME}"
+
+      - name: require an npm token
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "${NODE_AUTH_TOKEN}" ]; then
+            echo "::error::NPM_TOKEN secret is not set. Publishing is wired but disarmed."
+            echo "Add the NPM_TOKEN repository secret to enable this job."
+            exit 1
+          fi
+
+      # Order matters: sdk and cli pin core exactly, so core must exist first.
+      - name: publish @traceglass/core
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish -w @traceglass/core --access public --provenance
+
+      - name: publish @traceglass/sdk
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish -w @traceglass/sdk --access public --provenance
+
+      - name: publish traceglass
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish -w traceglass --access public --provenance
