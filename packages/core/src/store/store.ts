@@ -1,7 +1,46 @@
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, statSync } from 'node:fs';
 import { dirname } from 'node:path';
 import Database from 'better-sqlite3';
 import { RunSchema, type Run } from '../model.js';
+
+/**
+ * Current on-disk schema version, recorded in `PRAGMA user_version`.
+ *
+ * 0 — pre-versioning (traceglass ≤ 0.7.2). Shape is identical to v1, but these
+ *     files were written before secure_delete was enabled, so a redacted or
+ *     pruned value may still be readable in a freed page. Migrating to 1 purges
+ *     that residue once.
+ * 1 — same table shape, and the file is known to have been purged at least once
+ *     under secure_delete.
+ */
+export const SCHEMA_VERSION = 1;
+
+/**
+ * One forward migration step. Steps run in order, each bumping user_version by
+ * itself, so a database three versions behind catches up one step at a time and
+ * a crash mid-upgrade leaves a coherent version on disk rather than a lie.
+ *
+ * Adding a migration: append a step with the next `to`, bump SCHEMA_VERSION to
+ * match, and keep the append-only invariant — a migration may reshape storage
+ * but must never silently drop a run.
+ */
+interface Migration {
+  readonly to: number;
+  readonly description: string;
+  readonly apply: (db: Database.Database) => void;
+}
+
+const MIGRATIONS: readonly Migration[] = [
+  {
+    to: 1,
+    description: 'purge freed pages left readable by pre-0.7.1 redaction and pruning',
+    // Databases written by 0.6.0–0.7.2 kept redacted plaintext in freed pages;
+    // the 0.7.1 fix only purges on the NEXT redact or prune, so an untouched
+    // file still holds values whose owners were told they were erased. One
+    // VACUUM under secure_delete settles it, and user_version keeps it to once.
+    apply: (db) => purgeFreedPages(db),
+  },
+];
 
 /** Lightweight run metadata for listings (no full step payloads). */
 export interface RunSummary {
@@ -19,24 +58,45 @@ export interface RunSummary {
 
 /**
  * Append-only run store (PRD §6). A run, once ingested, is never updated:
- * there is intentionally NO update path in this class. That immutability is
- * what lets the hash chain stand as an audit record rather than a debug log.
- * Deletion exists ONLY through pruneOlderThan (retention policy) — an explicit
- * whole-run path whose results the caller must write to an audit log.
+ * the ONLY update path is replaceRedacted (erasure, in place) and the ONLY
+ * delete path is pruneOlderThan (retention). That immutability is what lets the
+ * hash chain stand as an audit record rather than a debug log; both exceptions
+ * are explicit, narrow, and their results must be written to an audit log by
+ * the caller. `vacuum` is not a third path: it rewrites the file without
+ * changing a single logical row.
  */
 export class RunStore {
   private readonly db: Database.Database;
+  private readonly path: string;
+  /** Schema version found on disk at open, after any migrations were applied. */
+  readonly schemaVersion: number;
 
   constructor(path: string) {
     if (path !== ':memory:') {
       mkdirSync(dirname(path), { recursive: true });
     }
+    this.path = path;
     this.db = new Database(path);
     this.db.pragma('journal_mode = WAL');
     // Zero out freed content instead of leaving it readable in the page file.
     // Without this, a redacted value survives in a freed page and `strings` on
     // the .sqlite recovers it verbatim — an erasure claim that does not hold.
     this.db.pragma('secure_delete = ON');
+
+    const found = readUserVersion(this.db);
+    if (found > SCHEMA_VERSION) {
+      this.db.close();
+      throw new Error(
+        `Database at ${path} uses schema version ${found}, but this traceglass understands ` +
+          `at most ${SCHEMA_VERSION}. A newer traceglass wrote it — upgrade rather than risk ` +
+          `corrupting the record (nothing was modified).`,
+      );
+    }
+
+    // A file with no runs table is new, whatever its user_version says: it gets
+    // the current schema and no migration (a VACUUM on every open would be a
+    // brutal regression on a large store, so the version stamp is the gate).
+    const fresh = !tableExists(this.db, 'runs');
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS runs (
         id          TEXT PRIMARY KEY,
@@ -52,6 +112,13 @@ export class RunStore {
         data        TEXT NOT NULL
       );
     `);
+
+    if (fresh) {
+      setUserVersion(this.db, SCHEMA_VERSION);
+      this.schemaVersion = SCHEMA_VERSION;
+    } else {
+      this.schemaVersion = migrate(this.db, found);
+    }
   }
 
   /**
@@ -185,21 +252,49 @@ export class RunStore {
         runHash: validated.runHash,
         cost: validated.totals.cost,
       });
-    this.purgeFreedPages();
+    purgeFreedPages(this.db);
   }
 
   /**
-   * Reclaim freed pages so a removed value cannot be read back out of the file.
+   * Reclaim freed pages on demand, so a value removed earlier cannot be read
+   * back out of the file. Changes no logical row; safe to run repeatedly.
    *
-   * secure_delete only governs pages freed from here on; an UPDATE also leaves
-   * the superseded row in the WAL until it is checkpointed. Redaction and
-   * retention are both rare, explicit operations, so paying for a checkpoint +
-   * VACUUM there is worth an erasure guarantee that survives someone running
-   * `strings` on a stolen copy of the database.
+   * This exists because the 0.7.1 fix only purges on the NEXT redaction or
+   * prune. Any database written by 0.6.0–0.7.2 that has not been touched since
+   * still holds recoverable plaintext for values whose owners were told they
+   * were erased; opening it now migrates it (once), and this method is the
+   * manual lever for anyone who wants to force the sweep — after restoring a
+   * backup, say, or before handing a copy of the file to someone else.
    */
-  private purgeFreedPages(): void {
-    this.db.pragma('wal_checkpoint(TRUNCATE)');
-    this.db.exec('VACUUM');
+  vacuum(): VacuumResult {
+    const bytesBefore = this.fileBytes();
+    purgeFreedPages(this.db);
+    const bytesAfter = this.fileBytes();
+    return {
+      path: this.path,
+      bytesBefore,
+      bytesAfter,
+      reclaimed: Math.max(0, bytesBefore - bytesAfter),
+    };
+  }
+
+  /**
+   * Durable bytes: the database plus its write-ahead log (0 for :memory:).
+   * The -shm sidecar is deliberately excluded — it is a fixed-size shared-memory
+   * index that exists only while the file is open, and counting it would report
+   * 44 KiB for a 12 KiB store.
+   */
+  private fileBytes(): number {
+    if (this.path === ':memory:') return 0;
+    let total = 0;
+    for (const suffix of ['', '-wal']) {
+      try {
+        total += statSync(this.path + suffix).size;
+      } catch {
+        // WAL absent (checkpointed away, or never created) — counts as 0.
+      }
+    }
+    return total;
   }
 
   /**
@@ -221,13 +316,74 @@ export class RunStore {
     });
     const pruned = prune(cutoffIso);
     // Outside the transaction: VACUUM cannot run inside one.
-    if (pruned.length > 0) this.purgeFreedPages();
+    if (pruned.length > 0) purgeFreedPages(this.db);
     return pruned;
   }
 
   close(): void {
     this.db.close();
   }
+}
+
+/**
+ * Reclaim freed pages so removed content cannot be read back out of the file.
+ *
+ * secure_delete only governs pages freed from here on; an UPDATE also leaves
+ * the superseded row in the WAL until it is checkpointed. So: checkpoint to
+ * fold the WAL into the main file, VACUUM to rebuild it from live rows only,
+ * then checkpoint again because VACUUM itself wrote every page through the WAL.
+ * Skipping that last step leaves the rewritten pages — and whatever the WAL had
+ * already accumulated — sitting in the sidecar an attacker would also read.
+ */
+function purgeFreedPages(db: Database.Database): void {
+  db.pragma('wal_checkpoint(TRUNCATE)');
+  db.exec('VACUUM');
+  db.pragma('wal_checkpoint(TRUNCATE)');
+}
+
+/** True when a table of this name exists (used to tell a new file from an old one). */
+function tableExists(db: Database.Database, name: string): boolean {
+  const row = db
+    .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`)
+    .get(name);
+  return row !== undefined;
+}
+
+function readUserVersion(db: Database.Database): number {
+  const rows = db.pragma('user_version') as Array<{ user_version: number }>;
+  return Number(rows[0]?.user_version ?? 0);
+}
+
+function setUserVersion(db: Database.Database, version: number): void {
+  // PRAGMA user_version takes no bound parameters; version is our own integer.
+  db.pragma(`user_version = ${Math.trunc(version)}`);
+}
+
+/**
+ * Bring a database forward to SCHEMA_VERSION, one recorded step at a time, and
+ * return the version now on disk. Each step commits its own version bump, so an
+ * interrupted upgrade resumes rather than re-running work already done.
+ */
+function migrate(db: Database.Database, from: number): number {
+  let current = from;
+  for (const step of MIGRATIONS) {
+    if (step.to <= current) continue;
+    step.apply(db);
+    setUserVersion(db, step.to);
+    current = step.to;
+  }
+  // A version bump with no step of its own (a purely additive change that
+  // CREATE TABLE IF NOT EXISTS already handled) still needs its stamp.
+  if (current !== SCHEMA_VERSION) setUserVersion(db, SCHEMA_VERSION);
+  return SCHEMA_VERSION;
+}
+
+/** What a vacuum reclaimed — file size before/after, in bytes. */
+export interface VacuumResult {
+  path: string;
+  bytesBefore: number;
+  bytesAfter: number;
+  reclaimed: number;
 }
 
 /** What pruneOlderThan removed — enough to audit-log the deletion. */

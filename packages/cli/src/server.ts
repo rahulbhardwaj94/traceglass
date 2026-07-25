@@ -49,6 +49,85 @@ export interface ServerHandle {
   close: () => Promise<void>;
 }
 
+/**
+ * Largest accepted request body, in bytes (32 MiB).
+ *
+ * Fastify's 1 MB default is far too small for this workload: a long Claude Code
+ * session with tool outputs serialises to several MB, and an OTLP exporter
+ * batching a whole agent run routinely pushes past 10 MB. At 1 MB a legitimate
+ * trace fails at the parser with no explanation of what went wrong. 32 MiB
+ * clears real traces with headroom while still capping a single request at a
+ * size the process can buffer without being pushed over. Override with
+ * --body-limit / TRACEGLASS_BODY_LIMIT when a fleet genuinely needs more.
+ */
+export const DEFAULT_BODY_LIMIT = 32 * 1024 * 1024;
+
+/**
+ * Ingest requests allowed per IP per minute (default).
+ *
+ * A collector receiving finished runs is low-rate by nature — an agent that
+ * takes minutes to run posts once. 120/min leaves 2/s of sustained headroom for
+ * a burst of backfilled runs while stopping one client from pinning the process
+ * with an unbounded POST loop. Override with --rate-limit / TRACEGLASS_RATE_LIMIT.
+ */
+export const DEFAULT_RATE_LIMIT = 120;
+
+const RATE_WINDOW_MS = 60_000;
+
+/**
+ * Routes that accept trace data. These are the DoS surface: they parse an
+ * attacker-sized body and write to the store. Matched against the route
+ * Fastify resolved, never the raw URL — same rule as the auth gate.
+ */
+const INGEST_ROUTES = new Set(['/api/ingest', '/v1/traces', '/api/sessions/:id/ingest']);
+
+/**
+ * Fixed-window per-IP counter for the ingest routes.
+ *
+ * Deliberately in-process rather than @fastify/rate-limit: the need is one
+ * fixed window over three routes, and traceglass ships four production
+ * dependencies precisely because it asks people to trust its supply chain with
+ * an audit record. Thirty lines we can read beats three transitive packages.
+ * The consequence is honest and documented — the window is per process, so a
+ * horizontally scaled deployment limits per instance, and state resets on
+ * restart. For a local-first collector that is the right trade.
+ */
+class RateLimiter {
+  private readonly hits = new Map<string, { count: number; resetAt: number }>();
+  /** Cap on tracked clients, so the limiter itself cannot be a memory sink. */
+  private static readonly MAX_KEYS = 10_000;
+
+  constructor(private readonly limit: number) {}
+
+  /** Record a hit; returns whether it is allowed and when the window resets. */
+  take(key: string, now = Date.now()): { allowed: boolean; remaining: number; resetAt: number } {
+    const existing = this.hits.get(key);
+    if (!existing || existing.resetAt <= now) {
+      if (this.hits.size >= RateLimiter.MAX_KEYS) this.evictExpired(now);
+      const fresh = { count: 1, resetAt: now + RATE_WINDOW_MS };
+      this.hits.set(key, fresh);
+      return { allowed: true, remaining: this.limit - 1, resetAt: fresh.resetAt };
+    }
+    existing.count += 1;
+    return {
+      allowed: existing.count <= this.limit,
+      remaining: Math.max(0, this.limit - existing.count),
+      resetAt: existing.resetAt,
+    };
+  }
+
+  private evictExpired(now: number): void {
+    for (const [key, entry] of this.hits) {
+      if (entry.resetAt <= now) this.hits.delete(key);
+    }
+    // Still full of live windows: drop the oldest so memory stays bounded.
+    if (this.hits.size >= RateLimiter.MAX_KEYS) {
+      const oldest = this.hits.keys().next();
+      if (!oldest.done) this.hits.delete(oldest.value);
+    }
+  }
+}
+
 export interface ServerOptions {
   /** Bearer token required for all POST routes (and GETs when requireAuthForReads). */
   token?: string;
@@ -58,6 +137,10 @@ export interface ServerOptions {
   signer?: (run: Run) => Run;
   /** Also require the token on GET /api routes (set when binding non-loopback). */
   requireAuthForReads?: boolean;
+  /** Max request body in bytes (default DEFAULT_BODY_LIMIT). */
+  bodyLimit?: number;
+  /** Ingest requests per IP per minute; 0 disables (default DEFAULT_RATE_LIMIT). */
+  rateLimit?: number;
 }
 
 function tokenMatches(header: string | undefined, token: string): boolean {
@@ -89,13 +172,80 @@ function isApiRoute(path: string): boolean {
   return path === '/api' || path.startsWith('/api/');
 }
 
+/** Human-readable byte size for limit messages. */
+function mib(bytes: number): string {
+  return `${(bytes / (1024 * 1024)).toFixed(bytes % (1024 * 1024) === 0 ? 0 : 1)} MiB`;
+}
+
 /**
  * Build the Fastify app: JSON API over the run store plus the static web SPA.
  * By default (dashboard mode) the store is read-only from the server's
  * perspective; serve mode adds authenticated collector ingest routes.
  */
 export function buildServer(store: RunStore, opts: ServerOptions = {}): FastifyInstance {
-  const app = Fastify({ logger: false });
+  const bodyLimit = opts.bodyLimit ?? DEFAULT_BODY_LIMIT;
+  const rateLimit = opts.rateLimit ?? DEFAULT_RATE_LIMIT;
+  const app = Fastify({ logger: false, bodyLimit });
+
+  /**
+   * The 413 body, shared by the early content-length check and the parser
+   * backstop. Fastify's stock 413 says only "Request body is too large", which
+   * tells an operator nothing about what to change; name the limit and the flag.
+   */
+  const tooLarge = (reply: FastifyReply) =>
+    reply.code(413).send({
+      error: 'payload too large',
+      message:
+        `Request body exceeds the ${mib(bodyLimit)} limit. Split the trace, or raise ` +
+        `the limit with --body-limit <MiB> (or TRACEGLASS_BODY_LIMIT).`,
+      limitBytes: bodyLimit,
+    });
+
+  app.setErrorHandler((raw, _req, reply) => {
+    const error = raw as { code?: string; statusCode?: number; message?: string };
+    if (error.code === 'FST_ERR_CTP_BODY_TOO_LARGE' || error.statusCode === 413) {
+      return tooLarge(reply);
+    }
+    const status = error.statusCode && error.statusCode >= 400 ? error.statusCode : 500;
+    return reply.code(status).send({ error: error.message ?? 'internal server error' });
+  });
+
+  // Reject an over-limit body from its declared content-length, before a single
+  // byte is buffered. Fastify's own bodyLimit only trips partway through the
+  // upload, which both wastes the buffering and tends to reset the connection
+  // mid-write — the client then sees a socket error instead of a clear 413.
+  // A declared length can lie, or be absent under chunked encoding, so the
+  // parser limit above stays as the backstop.
+  app.addHook('onRequest', async (req: FastifyRequest, reply: FastifyReply) => {
+    const declared = Number(req.headers['content-length']);
+    if (Number.isFinite(declared) && declared > bodyLimit) return tooLarge(reply);
+  });
+
+  if (rateLimit > 0) {
+    const limiter = new RateLimiter(rateLimit);
+    // onRequest, so a flood is turned away BEFORE the body is read — the whole
+    // point of the limit. It runs ahead of the auth gate on purpose: an
+    // unauthenticated flood is exactly the traffic worth shedding early.
+    app.addHook('onRequest', async (req: FastifyRequest, reply: FastifyReply) => {
+      if (req.method !== 'POST' || !INGEST_ROUTES.has(authPath(req))) return;
+      const { allowed, remaining, resetAt } = limiter.take(req.ip);
+      const retryAfter = Math.max(1, Math.ceil((resetAt - Date.now()) / 1000));
+      reply.header('x-ratelimit-limit', String(rateLimit));
+      reply.header('x-ratelimit-remaining', String(remaining));
+      reply.header('x-ratelimit-reset', String(retryAfter));
+      if (!allowed) {
+        return reply
+          .code(429)
+          .header('retry-after', String(retryAfter))
+          .send({
+            error: 'too many requests',
+            message: `Ingest is limited to ${rateLimit} requests per minute per client. Retry in ${retryAfter}s.`,
+            limit: rateLimit,
+            retryAfterSeconds: retryAfter,
+          });
+      }
+    });
+  }
 
   if (opts.token) {
     const token = opts.token;
@@ -254,6 +404,10 @@ export interface ServeOptions {
   host: string;
   token?: string;
   signer?: (run: Run) => Run;
+  /** Max request body in bytes (default DEFAULT_BODY_LIMIT). */
+  bodyLimit?: number;
+  /** Ingest requests per IP per minute; 0 disables (default DEFAULT_RATE_LIMIT). */
+  rateLimit?: number;
 }
 
 /**
@@ -273,6 +427,8 @@ export async function startServe(store: RunStore, opts: ServeOptions): Promise<S
     enableIngest: true,
     signer: opts.signer,
     requireAuthForReads: !isLoopback(opts.host),
+    ...(opts.bodyLimit !== undefined ? { bodyLimit: opts.bodyLimit } : {}),
+    ...(opts.rateLimit !== undefined ? { rateLimit: opts.rateLimit } : {}),
   });
   await app.listen({ port: opts.port, host: opts.host });
   return {

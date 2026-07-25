@@ -134,6 +134,9 @@ npx traceglass watch --policy policy.json --anchor
 # Irreversibly remove PII — the chain and signature still verify afterwards
 npx traceglass redact <runId> --path input.ssn --pattern email --reason "erasure request" --yes
 
+# Purge freed pages so removed values can't be read back out of the store file
+npx traceglass vacuum
+
 # Watch a run LIVE as it happens — steps, cost, and warnings stream in
 npx traceglass tail
 ```
@@ -219,6 +222,39 @@ OTLP/HTTP-compatible `POST /v1/traces`, bearer-token auth on every write
 deletions are the store's **only** delete path and are audit-logged to
 `~/.traceglass/audit.jsonl`. Binding a non-loopback host without a token is
 refused outright — the local-first guarantee doesn't quietly degrade.
+
+### Collector limits
+
+An open ingest port is a DoS surface, and an unbounded body limit lets one
+client pin the process. Both are capped, and both are explicit:
+
+| Limit | Default | Override |
+| --- | --- | --- |
+| Request body | **32 MiB** | `--body-limit <MiB>` / `TRACEGLASS_BODY_LIMIT` |
+| Ingest rate | **120 requests/min per client** | `--rate-limit <n>` / `TRACEGLASS_RATE_LIMIT` (`0` disables) |
+
+32 MiB rather than Fastify's 1 MB default because real traces are not small — a
+long Claude Code session with tool outputs runs to several MB, and an OTLP
+exporter batching a whole agent run routinely passes 10 MB. At 1 MB a legitimate
+trace fails at the parser with no explanation. An over-limit request is refused
+from its declared `Content-Length` before a byte is buffered, and answered with
+**413** naming the limit and the flag; chunked uploads that declare no length
+hit the parser backstop and get the same 413.
+
+120 ingests/min is generous for the workload — an agent that takes minutes to
+run posts once — while stopping an unbounded POST loop. Over the limit you get
+**429** with `Retry-After` and `X-RateLimit-*` headers. The counter is per
+client IP over a fixed one-minute window, applied only to the routes that accept
+trace data (`POST /api/ingest`, `POST /v1/traces`, `POST /api/sessions/:id/ingest`)
+and keyed off the route Fastify matched, so a percent-encoded path lands in the
+same bucket. Reads are never throttled: a misbehaving collector must not blind
+the dashboard someone is using to look at the runs already stored.
+
+The limiter is in-process by design rather than a plugin dependency — traceglass
+ships four production dependencies precisely because it asks you to trust its
+supply chain with an audit record. The trade is honest: the window is per
+process, so a horizontally scaled deployment limits per instance, and the
+counters reset on restart. Put a real gateway in front if you need more.
 
 ## Governance: policies, approvals, search (v0.4)
 
@@ -326,6 +362,48 @@ npx traceglass redact <runId> --path input.ssn --yes
 The audit report discloses every redaction (path, reason, who, when) under
 **Data minimisation**, so "what was removed, and is this record still intact?"
 is answerable at a glance.
+
+### Erasure has to hold against the file, not just the query
+
+Removing a value from a row is not the same as removing it from the database
+file. SQLite leaves freed pages byte-for-byte intact unless told otherwise, and
+in WAL mode the superseded row survives until the next checkpoint — so on
+traceglass 0.6.0–0.7.0 a value you had just been told was irreversibly removed
+came straight back out of `strings ~/.traceglass/traceglass.sqlite`.
+
+Since v0.7.1 the store runs with `secure_delete` on and follows every redaction
+and retention prune with a checkpoint and a `VACUUM`. v0.8 closes the rest of
+the gap:
+
+```bash
+npx traceglass vacuum
+#   Vacuumed /Users/you/.traceglass/traceglass.sqlite
+#     schema version: 1
+#     runs kept:      42 (vacuum never removes a run)
+#     file size:      8.4 MiB → 6.1 MiB (2.3 MiB reclaimed)
+```
+
+- **Existing databases are swept once, automatically.** A store written before
+  the fix is stamped at schema version 0; opening it with v0.8 purges the
+  residue and stamps it version 1. It does **not** vacuum on every open — that
+  would be a serious regression on a large store.
+- **`vacuum` is the manual lever.** Run it after restoring a backup, before
+  handing a copy of the file to anyone, or any time you want the sweep now. It
+  changes no logical row, is safe to run repeatedly, and reports what it
+  reclaimed.
+- **Verify it yourself.** `strings traceglass.sqlite | grep -c <value>` counts
+  matching *lines*, not occurrences, and will mislead you; use
+  `strings -a traceglass.sqlite | grep -o <value> | wc -l`, and check the
+  `-wal` and `-shm` sidecars too.
+
+### Schema versioning
+
+The store records its schema in `PRAGMA user_version` and migrates forward one
+recorded step at a time on open. A database written by a **newer** traceglass is
+refused with a clear error rather than opened and corrupted — nothing is
+modified, so the newer binary still reads it fine. Migrations may reshape
+storage but never bypass the append-only invariant: `pruneOlderThan` remains the
+only delete path and `replaceRedacted` the only update path.
 
 ```bash
 docker build -t traceglass .
