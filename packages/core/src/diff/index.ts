@@ -1,0 +1,25 @@
+export {
+  alignSteps,
+  stepIdentity,
+  type Alignment,
+  type AlignmentEntry,
+  type AlignOptions,
+} from './align.js';
+export {
+  diffRuns,
+  type CostDelta,
+  type DiffCaveat,
+  type DiffCaveatKind,
+  type DiffOptions,
+  type DiffSummary,
+  type FieldChange,
+  type LeafDiff,
+  type LeafStatus,
+  type NumericDelta,
+  type RunDiff,
+  type RunSide,
+  type StepDiff,
+  type StepDiffKind,
+  type ToolDelta,
+  type WarningDiff,
+} from './diff.js';

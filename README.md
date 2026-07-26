@@ -125,6 +125,9 @@ npx traceglass serve --port 4318 --token <token> --retain 180
 # Assert what a run was ALLOWED to do (exit 1 on any violation — CI-ready)
 npx traceglass check <runId-or-file> --policy policy.json --json
 
+# Compare two runs — what changed, what regressed, where the cost moved
+npx traceglass diff <baseline> <candidate> --fail-on-change
+
 # Sweep every stored run: which agents ever touched this account?
 npx traceglass search "4471"
 

@@ -462,6 +462,105 @@ check('the audit report discloses what was redacted', () => {
   assert(html.includes('input.ssn'), 'redacted path not disclosed');
 });
 
+// 15c. diff: what changed between two runs of the same agent
+const diffHome = join(out, 'diff-home');
+check('diff locates an insertion and a changed argument without cascading', () => {
+  mkdirSync(diffHome, { recursive: true });
+  cli(['keygen'], { home: diffHome });
+  const agent = join(out, 'diff-agent.mjs');
+  writeFileSync(
+    agent,
+    `import { startRecording } from ${sdkSpecifier};
+     const b = process.argv[2] === 'candidate';
+     const rec = startRecording({ name: 'collections agent', id: b ? 'diff-candidate' : 'diff-base' });
+     rec.step({ type: 'user_input', label: 'Dun account 4471', input: { account: '4471' } });
+     if (b) rec.step({ type: 'plan', label: 'Think first' });
+     rec.step({ type: 'tool_call', toolName: 'get_payment_status', label: 'Tool: get_payment_status',
+       input: { account: b ? '4472' : '4471' }, tokens: b ? 1600 : 800, cost: b ? 0.9 : 0.4 });
+     if (b) rec.step({ type: 'tool_call', toolName: 'send_email', label: 'Tool: send_email',
+       input: { to: 'ops@example.test' }, tokens: 200, cost: 0.1 });
+     rec.step({ type: 'final_output', label: 'Done', output: 'Reminder sent.' });
+     await rec.end();`,
+  );
+  for (const variant of ['base', 'candidate']) {
+    execFileSync('node', [agent, variant], {
+      encoding: 'utf8',
+      env: { ...process.env, TRACEGLASS_HOME: diffHome },
+    });
+  }
+
+  const output = cli(['diff', 'diff-base', 'diff-candidate'], { home: diffHome });
+  assert(/2 added/.test(output), `insertions not reported: ${output.replace(/\n/g, ' | ')}`);
+  assert(/Think first/.test(output), `inserted step not named: ${output.replace(/\n/g, ' | ')}`);
+  // The whole point: the steps AFTER the insertion must not read as changed.
+  // Only get_payment_status genuinely differs; user_input and final_output do not.
+  assert(
+    /2 same · 1 changed/.test(output),
+    `insertion cascaded into later steps: ${output.replace(/\n/g, ' | ')}`,
+  );
+  assert(/input\.account/.test(output), `changed leaf not located: ${output}`);
+  assert(/"4471" .* "4472"/.test(output), `leaf values not shown: ${output}`);
+  assert(/\(\+0\.50\)/.test(output), `signed cost delta missing: ${output}`);
+  assert(/send_email/.test(output), `new tool not reported: ${output}`);
+});
+
+check('diff reports two identical runs as clean, and --fail-on-change gates CI', () => {
+  const clean = cli(['diff', 'diff-base', 'diff-base'], { home: diffHome });
+  assert(/No differences/.test(clean), `identical runs not clean: ${clean}`);
+
+  const { code, output } = cliFails(['diff', 'diff-base', 'diff-candidate', '--fail-on-change'], {
+    home: diffHome,
+  });
+  assert(code === 1, `expected exit 1, got ${code}`);
+  assert(/differs from the baseline/.test(output), `no regression verdict: ${output}`);
+});
+
+check('diff --json is machine-readable and works from a .tgev file', () => {
+  const baseline = join(out, 'diff-base.tgev');
+  cli(['export', 'diff-base', '-o', baseline], { home: diffHome });
+  // Second argument is a stored id, first is a file path: both resolve.
+  const parsed = JSON.parse(cli(['diff', baseline, 'diff-candidate', '--json'], { home: diffHome }));
+  assert(parsed.ok === true, `not ok: ${JSON.stringify(parsed.integrity).slice(0, 160)}`);
+  assert(parsed.diff.equivalent === false, 'expected a difference');
+  assert(parsed.diff.summary.added === 2, `wrong added count: ${parsed.diff.summary.added}`);
+  assert(parsed.diff.summary.same === 2, `wrong unchanged count: ${parsed.diff.summary.same}`);
+  const leaf = parsed.diff.steps
+    .flatMap((s) => s.leaves)
+    .find((l) => l.path === 'input.account');
+  assert(leaf && leaf.status === 'changed', `leaf not located: ${JSON.stringify(leaf)}`);
+  assert(leaf.a === '4471' && leaf.b === '4472', `wrong leaf values: ${JSON.stringify(leaf)}`);
+});
+
+check('diff calls a redacted leaf NOT COMPARABLE rather than changed', () => {
+  // The false-alarm guard: `pii-run` had input.ssn destroyed, the record is
+  // perfectly intact, and an unredacted twin must not read as tampered-with.
+  const redactHome = join(out, 'redact-home');
+  const twin = join(out, 'record-pii-twin.mjs');
+  writeFileSync(
+    twin,
+    `import { startRecording } from ${sdkSpecifier};
+     const rec = startRecording({ name: 'pii', id: 'pii-twin' });
+     rec.step({ type: 'user_input', label: 'Lookup', input: { ssn: '123-45-6789', keep: 'visible' } });
+     await rec.end();`,
+  );
+  execFileSync('node', [twin], {
+    encoding: 'utf8',
+    env: { ...process.env, TRACEGLASS_HOME: redactHome },
+  });
+
+  const output = cli(['diff', 'pii-run', 'pii-twin'], { home: redactHome });
+  assert(/redacted on A/.test(output), `redaction side not reported: ${output}`);
+  assert(/not comparable/.test(output), `not flagged as incomparable: ${output}`);
+  assert(/could not be compared/.test(output), `no caveat about redaction: ${output}`);
+
+  const parsed = JSON.parse(cli(['diff', 'pii-run', 'pii-twin', '--json'], { home: redactHome }));
+  const ssn = parsed.diff.steps[0].leaves.find((l) => l.path === 'input.ssn');
+  assert(ssn.status === 'redacted', `redacted leaf reported as "${ssn.status}"`);
+  assert(parsed.diff.summary.changed === 0, 'a redacted value was counted as a change');
+  assert(parsed.diff.equivalent === true, 'intact records reported as differing');
+  assert(parsed.diff.fullyComparable === false, 'diff claimed a complete comparison');
+});
+
 // 16. watch --once: auto-record a Claude Code session as signed evidence
 check('watch --once records a settled Claude Code session (signed, idempotent)', () => {
   const sessions = join(out, 'watch-sessions/-proj');

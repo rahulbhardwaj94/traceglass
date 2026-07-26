@@ -28,6 +28,10 @@ import {
   parseEvidence,
   parsePolicy,
   evaluatePolicy,
+  diffRuns,
+  type LeafDiff,
+  type RunDiff,
+  type StepDiff,
   redactRun,
   redactLegacyRun,
   patternsByName,
@@ -446,6 +450,219 @@ program
     store.close();
     if (!ok) process.exit(1);
   });
+
+/* ── `diff` rendering ─────────────────────────────────────────────────────── */
+
+/** One-line form of a payload value, safe for a terminal. */
+function preview(value: unknown, max = 56): string {
+  const text = (JSON.stringify(value) ?? 'undefined').replace(/\s+/g, ' ');
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+function money(currency: string, amount: number): string {
+  return `${currency} ${amount.toFixed(2)}`;
+}
+
+/** Signed delta, always explicit about direction: "+0.50", "-0.50". */
+function signedFixed(value: number): string {
+  return value > 0 ? `+${value.toFixed(2)}` : value.toFixed(2);
+}
+
+function signedInt(value: number): string {
+  return value > 0 ? `+${value}` : String(value);
+}
+
+function stepPosition(diff: StepDiff): string {
+  const a = diff.aIndex === null ? '#—' : `#${diff.aIndex}`;
+  const b = diff.bIndex === null ? '#—' : `#${diff.bIndex}`;
+  return `${a} → ${b}`;
+}
+
+function leafLine(leaf: LeafDiff): string {
+  switch (leaf.status) {
+    case 'changed':
+      return `~ ${leaf.path}  ${preview(leaf.a)} → ${preview(leaf.b)}`;
+    case 'added':
+      return `+ ${leaf.path}  ${leaf.redactedOn ? '(redacted)' : preview(leaf.b)}`;
+    case 'removed':
+      return `- ${leaf.path}  ${leaf.redactedOn ? '(redacted)' : preview(leaf.a)}`;
+    default: {
+      const where =
+        leaf.redactedOn === 'both' ? 'both records' : leaf.redactedOn === 'a' ? 'A' : 'B';
+      return `⊘ ${leaf.path}  redacted on ${where} — not comparable`;
+    }
+  }
+}
+
+/** Print one run's header block: what it is, and whether it is authentic. */
+function printDiffSide(
+  label: 'A' | 'B',
+  side: RunDiff['a'],
+  totals: { cost: number; tokens: number },
+  integrity: ReturnType<typeof verifyRunFull>,
+): void {
+  console.log(`  ${label}  ${side.id}  "${side.name}"`);
+  console.log(
+    `     ${side.steps} steps · ${money(side.currency, totals.cost)} · ${totals.tokens} tokens` +
+      ` · tgcanon/${side.hashVersion} · ${side.signed ? 'signed' : 'unsigned'}`,
+  );
+  if (integrity.ok) {
+    console.log('     ✓ chain intact');
+  } else {
+    console.log(`     ✗ ${integrity.chain.message}`);
+    console.log(`     ✗ ${integrity.signature.message}`);
+  }
+}
+
+const MAX_LEAF_LINES = 12;
+
+function renderDiff(d: RunDiff, showAll: boolean): void {
+  console.log('');
+  const s = d.summary;
+  if (d.equivalent) {
+    console.log(`  No differences — ${s.same} step(s) match, in order.`);
+  } else {
+    console.log(
+      `  Steps: ${s.same} same · ${s.changed} changed · ${s.added} added · ${s.removed} removed · ${s.moved} moved`,
+    );
+  }
+  const cost = d.totals.cost;
+  console.log(
+    `  Cost:   ${money(d.currency.a, cost.a)} → ${money(d.currency.b, cost.b)}` +
+      (cost.delta === null ? '  (no delta across currencies)' : `  (${signedFixed(cost.delta)})`),
+  );
+  const tokens = d.totals.tokens;
+  console.log(`  Tokens: ${tokens.a} → ${tokens.b}  (${signedInt(tokens.delta)})`);
+
+  const shown = d.steps.filter(
+    (step) => showAll || step.kind !== 'same' || step.moved || step.incomparableLeaves > 0,
+  );
+  if (shown.length > 0) console.log('');
+  for (const step of shown) {
+    const mark =
+      step.kind === 'added'
+        ? '+'
+        : step.kind === 'removed'
+          ? '-'
+          : step.kind === 'changed'
+            ? '~'
+            : step.moved
+              ? '↕'
+              : ' ';
+    console.log(
+      `  ${mark} ${stepPosition(step).padEnd(11)} ${step.label}${step.moved ? '   (moved)' : ''}`,
+    );
+
+    for (const field of step.fields) {
+      console.log(`        ${field.field.padEnd(8)} ${field.a ?? '—'} → ${field.b ?? '—'}`);
+    }
+    if (step.cost.delta === null ? step.cost.a !== step.cost.b : step.cost.delta !== 0) {
+      const suffix = step.cost.delta === null ? '' : `  (${signedFixed(step.cost.delta)})`;
+      console.log(
+        `        cost     ${money(d.currency.a, step.cost.a)} → ${money(d.currency.b, step.cost.b)}${suffix}`,
+      );
+    }
+    if (step.tokens.delta !== 0) {
+      console.log(
+        `        tokens   ${step.tokens.a} → ${step.tokens.b}  (${signedInt(step.tokens.delta)})`,
+      );
+    }
+    for (const leaf of step.leaves.slice(0, MAX_LEAF_LINES)) {
+      console.log(`        ${leafLine(leaf)}`);
+    }
+    if (step.leaves.length > MAX_LEAF_LINES) {
+      console.log(
+        `        … and ${step.leaves.length - MAX_LEAF_LINES} more leaf difference(s) (--json for all)`,
+      );
+    }
+    if (step.leaves.length === 0 && step.incomparableLeaves > 0) {
+      console.log(
+        `        ⊘ ${step.incomparableLeaves} redacted leaf value(s) in this step — not comparable`,
+      );
+    }
+  }
+
+  const tools = d.tools.filter((t) => showAll || t.delta !== 0);
+  if (tools.length > 0) {
+    console.log('\n  Tools');
+    const width = Math.max(...tools.map((t) => t.toolName.length));
+    for (const tool of tools) {
+      const mark = tool.delta > 0 ? '+' : tool.delta < 0 ? '-' : ' ';
+      console.log(
+        `    ${mark} ${tool.toolName.padEnd(width)}  ${tool.a} → ${tool.b}` +
+          (tool.delta === 0 ? '' : `  (${signedInt(tool.delta)})`),
+      );
+    }
+  }
+
+  const { appeared, cleared } = d.warnings;
+  if (appeared.length > 0 || cleared.length > 0) {
+    console.log('\n  Warnings');
+    for (const w of appeared) console.log(`    ⚠ appeared  ${w.kind}: ${w.message}`);
+    for (const w of cleared) console.log(`    ✓ cleared   ${w.kind}: ${w.message}`);
+  }
+
+  if (d.caveats.length > 0) {
+    console.log('\n  What this diff cannot tell you');
+    for (const caveat of d.caveats) console.log(`    ! ${caveat.message}`);
+  }
+  console.log('');
+}
+
+program
+  .command('diff')
+  .description(
+    'Compare two runs or .tgev files: steps added, removed, reordered or altered, and where cost moved',
+  )
+  .argument('<a>', 'baseline: id of a stored run, or path to an exported evidence file')
+  .argument('<b>', 'candidate: id of a stored run, or path to an exported evidence file')
+  .option('--json', 'machine-readable JSON output (for CI)')
+  .option('--all', 'also list steps and tools that did not change')
+  .option('--fail-on-change', 'exit 1 if anything changed (regression gate for CI)')
+  .action(
+    (
+      argA: string,
+      argB: string,
+      opts: { json?: boolean; all?: boolean; failOnChange?: boolean },
+    ) => {
+      const store = openStore();
+      const runA = loadRunOrEvidence(store, argA);
+      const runB = loadRunOrEvidence(store, argB);
+      store.close();
+
+      // A diff is only meaningful over authentic records, so both are verified
+      // alongside it — the same reasoning as `check`.
+      const integrityA = verifyRunFull(runA);
+      const integrityB = verifyRunFull(runB);
+      const diff = diffRuns(runA, runB);
+      const ok = integrityA.ok && integrityB.ok && (opts.failOnChange !== true || diff.equivalent);
+
+      if (opts.json) {
+        console.log(
+          JSON.stringify({ ok, integrity: { a: integrityA, b: integrityB }, diff }, null, 2),
+        );
+      } else {
+        console.log('');
+        printDiffSide(
+          'A',
+          diff.a,
+          { cost: diff.totals.cost.a, tokens: diff.totals.tokens.a },
+          integrityA,
+        );
+        printDiffSide(
+          'B',
+          diff.b,
+          { cost: diff.totals.cost.b, tokens: diff.totals.tokens.b },
+          integrityB,
+        );
+        renderDiff(diff, opts.all === true);
+        if (opts.failOnChange === true && !diff.equivalent) {
+          console.log('  ✗ --fail-on-change: this run differs from the baseline.\n');
+        }
+      }
+      if (!ok) process.exit(1);
+    },
+  );
 
 program
   .command('search')
