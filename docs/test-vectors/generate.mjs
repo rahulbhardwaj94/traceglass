@@ -43,6 +43,43 @@ const V2 = 2;
 /** The v2 preimage separator, U+0000. Written this way so no source file carries a raw NUL. */
 const NUL = String.fromCharCode(0);
 
+/*
+ * Unicode strings that MUST NOT be written as source literals.
+ *
+ * A decomposed literal does not survive the trip to disk: most editors, and
+ * several formatters, normalize a source file to NFC on save. That is exactly
+ * how the `committed` run's `input.unicode.nfd` leaf came to hold the
+ * PRECOMPOSED string (both unicode leaves in that run are byte-identical), so
+ * that run cannot tell apart a verifier that silently NFC-normalizes every
+ * string from one that obeys SPEC §4.2.4. Escapes are the only safe form.
+ *
+ * `assertUnicodeShapes` below fails the generator loudly if this file is ever
+ * normalized, rather than letting the corpus quietly stop testing the rule.
+ */
+const NFC_CAFE = 'caf\u00e9'; //        63 61 66 e9        'caf' + U+00E9
+const NFD_CAFE = 'cafe\u0301'; //      63 61 66 65 301    'cafe' + U+0301
+const ZWJ_ASTRONAUT = '\ud83d\udc69\u200d\ud83d\ude80'; // U+1F469 ZWJ U+1F680
+
+function assertUnicodeShapes() {
+  const cps = (s) =>
+    Array.from(s)
+      .map((c) => c.codePointAt(0).toString(16))
+      .join(' ');
+  const expect = (label, actual, wanted) => {
+    if (actual !== wanted) {
+      throw new Error(
+        `${label} is "${actual}", expected "${wanted}". This source file has been ` +
+          'Unicode-normalized. Rewrite the affected constant using \\uXXXX escapes.',
+      );
+    }
+  };
+  expect('NFC_CAFE', cps(NFC_CAFE), '63 61 66 e9');
+  expect('NFD_CAFE', cps(NFD_CAFE), '63 61 66 65 301');
+  expect('ZWJ_ASTRONAUT', cps(ZWJ_ASTRONAUT), '1f469 200d 1f680');
+  if (NFC_CAFE === NFD_CAFE) throw new Error('NFC_CAFE and NFD_CAFE collapsed to one string.');
+}
+assertUnicodeShapes();
+
 const sha256hex = (s) => createHash('sha256').update(s, 'utf8').digest('hex');
 const write = (rel, obj) => {
   const p = join(HERE, rel);
@@ -443,10 +480,61 @@ signedRun.signature.signedAt = SIGNED_AT; // pin the timestamp, then re-sign bel
   ).toString('base64');
 }
 
+// --- vector run 5: Unicode that is actually Unicode (ADDITIVE) -----------
+//
+// Why this run exists. `committed` above was documented as covering "NFC vs
+// NFD" end to end and does not: its `input.unicode.nfd` leaf holds the
+// PRECOMPOSED string, so both of its unicode leaves are byte-identical and an
+// implementation that silently NFC-normalizes every string still verifies it.
+// (Reported as F1 in verifiers/python/FINDINGS.md.)
+//
+// `committed` is frozen — records published since 0.3.0 verify against its
+// hashes — so it is left exactly as it is. This run closes the coverage gap
+// instead: same shape, same v1 rules, but the decomposed leaf is built from
+// escapes and is genuinely decomposed. `check.mjs` proves it discriminates by
+// NFC-normalizing the payload and requiring verification to FAIL.
+const unicodePayload = {
+  input: {
+    unicode: { nfc: NFC_CAFE, nfd: NFD_CAFE, emoji: ZWJ_ASTRONAUT },
+    note: NFD_CAFE,
+  },
+  output: { ok: true },
+};
+const unicodeSteps = [
+  {
+    id: 'vec-uni:0',
+    runId: 'vec-uni',
+    index: 0,
+    type: 'tool_call',
+    // The decomposed string also goes in a HASHED step field, not only under a
+    // commitment: normalizing `label` must move the step hash, normalizing a
+    // payload leaf must trip the commitment check. Two different mechanisms,
+    // one bug class.
+    label: `Tool: search ${NFD_CAFE}`,
+    startedAt: T0,
+    durationMs: 40,
+    tokens: 12,
+    cost: 0,
+    toolName: 'search',
+    ...unicodePayload,
+    spanId: '00000000000000d1',
+    ...deterministicCommitments(unicodePayload, 'vec-uni:0', V1),
+  },
+];
+const unicodeRun = makeRun('vec-uni', 'unicode run', unicodeSteps);
+
+{
+  const step = unicodeRun.steps[0];
+  if (step.commitments['input.unicode.nfc'] === step.commitments['input.unicode.nfd']) {
+    throw new Error('the NFC and NFD leaves committed to the same digest — the vector is inert');
+  }
+}
+
 write('04-runs/minimal.tgev.json', envelope(minimalRun));
 write('04-runs/committed.tgev.json', envelope(committedRun));
 write('04-runs/redacted.tgev.json', envelope(redactedRun));
 write('04-runs/signed.tgev.json', envelope(signedRun));
+write('04-runs/unicode.tgev.json', envelope(unicodeRun));
 
 const stepExpectations = (run) =>
   run.steps.map((s) => ({
@@ -466,6 +554,9 @@ write('03-steps.json', {
     minimal: stepExpectations(minimalRun),
     committed: stepExpectations(committedRun),
     redacted: stepExpectations(redactedRun),
+    // Appended, never inserted: the three above are frozen and their bytes must
+    // not move when a run is added.
+    unicode: stepExpectations(unicodeRun),
   },
 });
 
@@ -669,5 +760,6 @@ console.log('\nanchors:');
 console.log('  minimal  ', minimalRun.runHash);
 console.log('  committed', committedRun.runHash);
 console.log('  redacted ', redactedRun.steps[0].hash, '(must equal committed)');
+console.log('  unicode  ', unicodeRun.runHash);
 console.log('  v2       ', v2Run.runHash);
 console.log('  v2 sealed', v2SealedRun.runHash, '(must equal v2)');

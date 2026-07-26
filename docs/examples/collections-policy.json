@@ -1,0 +1,10 @@
+{
+  "name": "collections guardrails",
+  "rules": {
+    "maxCostPerRun": 10,
+    "maxCostPerStep": 5,
+    "requireApprovalFor": ["payments.*"],
+    "requireSignature": true,
+    "forbidWarnings": ["loop"]
+  }
+}

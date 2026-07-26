@@ -397,12 +397,77 @@ check('05 keyId',
   createHash('sha256').update(createPublicKey(five.publicKeyPem).export({ type: 'spki', format: 'der' })).digest('hex').slice(0, 16),
   five.keyId);
 
-for (const name of ['minimal', 'committed', 'redacted', 'signed']) {
+for (const name of ['minimal', 'committed', 'redacted', 'signed', 'unicode']) {
   check(`09 verify/${name}`, verifyRun(runFile(name)).join('; '), '');
 }
 
 // The defining property of commitment-based redaction.
 check('08 redaction preserves the anchor', runFile('redacted').runHash, runFile('committed').runHash);
+
+/* ------------------------------------------------------------------ *
+ * SPEC §4.2.4 — no Unicode normalization, at the envelope level.
+ *
+ * A corpus that only SAYS it covers NFC vs NFD is worse than one that does
+ * not mention it. The `committed` run's two unicode leaves are byte-identical
+ * (both precomposed), so it cannot catch an implementation that normalizes;
+ * `unicode` exists to catch exactly that, and the checks below prove it has
+ * teeth rather than asserting it in a comment.
+ * ------------------------------------------------------------------ */
+{
+  const cps = (s) =>
+    Array.from(s)
+      .map((c) => c.codePointAt(0).toString(16))
+      .join(' ');
+  const uni = runFile('unicode');
+  const step = uni.steps[0];
+
+  check('04 unicode/nfc leaf is precomposed', cps(step.input.unicode.nfc), '63 61 66 e9');
+  check('04 unicode/nfd leaf is decomposed', cps(step.input.unicode.nfd), '63 61 66 65 301');
+  check(
+    '04 unicode/the two leaves are distinct strings',
+    step.input.unicode.nfc === step.input.unicode.nfd,
+    false,
+  );
+
+  // The discriminating test. Normalize the decomposed leaves to NFC — the
+  // single transformation a careless implementation applies for free — and
+  // verification MUST fail at both the committed leaf and the plain one.
+  const normalized = structuredClone(uni);
+  const nstep = normalized.steps[0];
+  nstep.input.unicode.nfd = nstep.input.unicode.nfd.normalize('NFC');
+  nstep.input.note = nstep.input.note.normalize('NFC');
+  const problems = verifyRun(normalized);
+  check(
+    '04 unicode/NFC-normalizing a committed leaf is detected',
+    problems.some((p) => p.includes('commitment mismatch at input.unicode.nfd')),
+    true,
+  );
+  check(
+    '04 unicode/NFC-normalizing a second leaf is detected',
+    problems.some((p) => p.includes('commitment mismatch at input.note')),
+    true,
+  );
+
+  // The other half: `label` is a HASHED step field (SPEC §5.1), not a
+  // committed payload leaf, so normalizing it moves the step hash itself.
+  // Once a step carries commitments the raw payload no longer feeds the hash
+  // at all — which is why the two leaf checks above have to exist separately.
+  check('04 unicode/label is decomposed', cps(step.label).endsWith('63 61 66 65 301'), true);
+  {
+    const relabelled = structuredClone(uni);
+    relabelled.steps[0].label = relabelled.steps[0].label.normalize('NFC');
+    check(
+      '04 unicode/NFC-normalizing a hashed field moves the step hash',
+      hashStep(relabelled.steps[0], '', 1) === step.hash,
+      false,
+    );
+    check(
+      '04 unicode/...and is reported as a broken chain',
+      verifyRun(relabelled).some((p) => p.includes('hash mismatch')),
+      true,
+    );
+  }
+}
 
 /* ================================================================== *
  * tgcanon/2 (SPEC §15)                                                *
