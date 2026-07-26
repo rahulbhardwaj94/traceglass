@@ -1,0 +1,28 @@
+# Git rewrites LF to CRLF on Windows checkouts (core.autocrlf, the default on
+# GitHub's windows runners). For anything compared byte for byte that is
+# corruption, not a formatting difference — a DER timestamp token gains a 0x0D
+# before every 0x0A, its declared ASN.1 lengths stop matching the buffer, and
+# parsing fails with an error that says nothing about line endings. Verified:
+# response.tsr goes 2624 -> 2643 bytes and parseTimeStampResponse throws.
+#
+# So: every fixture whose exact bytes matter is marked -text.
+
+# RFC 3161 requests, responses and DER blobs
+*.tsr   -text
+*.tsq   -text
+*.der   -text
+*.bin   -text
+
+# Keys and certificates — parsed strictly, and hashed in places
+*.pem   -text
+
+# Evidence exports and stores, verified against a recorded hash
+*.tgev  -text
+*.sqlite -text
+
+# The TSA fixture corpus: nonces and JSON here are diffed against recomputed
+# values, so keep the whole directory byte-exact rather than listing types.
+packages/cli/test-fixtures/** -text
+
+# Frozen canonicalization vectors — the point of them is byte equality.
+docs/test-vectors/** -text
