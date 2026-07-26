@@ -1,0 +1,92 @@
+{
+  "formatVersion": 1,
+  "exportedAt": "2026-07-25T12:59:19.620Z",
+  "run": {
+    "id": "legacy-v1",
+    "name": "pre-change baseline",
+    "startedAt": "2026-01-01T00:00:00.000Z",
+    "endedAt": "2026-01-01T00:00:02.000Z",
+    "status": "completed",
+    "currency": "INR",
+    "totals": {
+      "tokens": 20,
+      "cost": 0.00005,
+      "durationMs": 10,
+      "steps": 2
+    },
+    "warnings": [],
+    "steps": [
+      {
+        "id": "legacy:0",
+        "runId": "legacy-v1",
+        "index": 0,
+        "type": "tool_call",
+        "label": "step 0",
+        "startedAt": "2026-01-01T00:00:00.000Z",
+        "durationMs": 5,
+        "tokens": 10,
+        "cost": 0.000025,
+        "toolName": "db",
+        "spanId": "span-0",
+        "hash": "f259d1bde992f80e6dea3174be6a0425bd1512b85847fc14a16025a4a008a445",
+        "prevHash": "",
+        "input": {
+          "account": "4471",
+          "ssn": "[traceglass:redacted]"
+        },
+        "commitments": {
+          "input.account": "890cd9ead2cf44c2c8ce05dbf77a5bc3df23d0f694c07db13411863673ff5062",
+          "input.ssn": "2b5d58ec70a77044bff3a7969f87d589bb2b5c4addecd5eb62f284e8d4ab91ee"
+        },
+        "salts": {
+          "input.account": "3e88627ddbb296030295802eca123556"
+        },
+        "redactions": [
+          {
+            "path": "input.ssn",
+            "at": "2026-07-25T12:59:19.620Z",
+            "reason": "gdpr-17",
+            "by": "manual"
+          }
+        ]
+      },
+      {
+        "id": "legacy:1",
+        "runId": "legacy-v1",
+        "index": 1,
+        "type": "tool_call",
+        "label": "step 1",
+        "startedAt": "2026-01-01T00:00:01.000Z",
+        "durationMs": 5,
+        "tokens": 10,
+        "cost": 0.000025,
+        "toolName": "db",
+        "spanId": "span-1",
+        "hash": "0198d4601fb03e9a92146037e19bf70f5ad2a96a60c0688c22ab32d6fe25ce97",
+        "prevHash": "f259d1bde992f80e6dea3174be6a0425bd1512b85847fc14a16025a4a008a445",
+        "input": {
+          "amount": 500000
+        },
+        "output": {
+          "transferred": true
+        },
+        "commitments": {
+          "input.amount": "ce48cf1b3b7fb4d4c507177eff709cffb8ae0af3e9551d4ab81fff83c99bf539",
+          "output.transferred": "0e0dfb01884ef7b5c322e3edeee53c5707154209b52ae145936dc5ad454f08d6"
+        },
+        "salts": {
+          "input.amount": "8ccdad182f7d37a025e67f22b0f05fee",
+          "output.transferred": "ff38239cfe0cde14217a60af0d662a3d"
+        }
+      }
+    ],
+    "runHash": "0198d4601fb03e9a92146037e19bf70f5ad2a96a60c0688c22ab32d6fe25ce97",
+    "signature": {
+      "algorithm": "ed25519",
+      "keyId": "b130d84479d55c91",
+      "publicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA/wZkv4W6gZAF1Zv60Rg3SISVHGuF0AcU+Bt0RRbjvak=\n-----END PUBLIC KEY-----\n",
+      "signature": "Pv885blMxiNQVQ3a346FGVZr2Dm5+exHmoaMlNrjCh+cEmiWZaHHhRk+yWR13Lf3wbvnF02G83KR0VtlMNfmAA==",
+      "signedAt": "2026-07-25T12:59:19.618Z"
+    }
+  }
+}

@@ -3,10 +3,12 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import {
+  DEFAULT_HASH_VERSION,
   JOURNAL_FORMAT_VERSION,
   RunStore,
   analyzeRun,
   buildCommitments,
+  computeRunHash,
   hashStep,
   journalLine,
   patternsByName,
@@ -114,6 +116,12 @@ export function startRecording(opts: StartRecordingOptions): Recorder {
   const redactable = opts.redactable !== false; // on by default (v0.6)
   const patterns = opts.redactPatterns ? patternsByName(opts.redactPatterns) : [];
 
+  // New recordings emit the current format. The version is written into the
+  // journal's meta line as well, so an orphaned journal recovers under the
+  // rules its steps were actually chained with rather than the ones whatever
+  // build runs `traceglass recover` happens to default to.
+  const hashVersion = DEFAULT_HASH_VERSION;
+
   const journalFile = dir ? join(dir, 'journal', `${runId}.jsonl`) : null;
   if (journalFile) {
     mkdirSync(join(dir!, 'journal'), { recursive: true });
@@ -126,6 +134,7 @@ export function startRecording(opts: StartRecordingOptions): Recorder {
         name: opts.name,
         currency,
         startedAt,
+        hashVersion,
       }),
     );
   }
@@ -146,7 +155,7 @@ export function startRecording(opts: StartRecordingOptions): Recorder {
       };
       let redactions: Step['redactions'];
       if (patterns.length > 0) {
-        const scrubbed = scrubStepPayload(payload, patterns);
+        const scrubbed = scrubStepPayload(payload, patterns, hashVersion);
         payload = scrubbed.payload;
         if (scrubbed.redactions.length > 0) redactions = scrubbed.redactions;
       }
@@ -166,10 +175,10 @@ export function startRecording(opts: StartRecordingOptions): Recorder {
         spanId: randomBytes(8).toString('hex'),
         hash: '',
         prevHash,
-        ...(redactable ? buildCommitments(payload) : {}),
+        ...(redactable ? buildCommitments(payload, hashVersion) : {}),
         ...(redactions !== undefined ? { redactions } : {}),
       };
-      step.hash = hashStep(step, prevHash);
+      step.hash = hashStep(step, prevHash, hashVersion);
       prevHash = step.hash;
       steps.push(step);
       if (journalFile) appendFileSync(journalFile, journalLine({ kind: 'step', step }));
@@ -184,7 +193,6 @@ export function startRecording(opts: StartRecordingOptions): Recorder {
         endOpts.status ?? (steps.some((s) => s.type === 'error') ? 'failed' : 'completed');
       if (journalFile) appendFileSync(journalFile, journalLine({ kind: 'end', status }));
 
-      const last = steps[steps.length - 1]!;
       const totals = steps.reduce(
         (acc, s) => ({
           tokens: acc.tokens + s.tokens,
@@ -194,9 +202,11 @@ export function startRecording(opts: StartRecordingOptions): Recorder {
         }),
         { tokens: 0, cost: 0, durationMs: 0, steps: 0 },
       );
-      // Warnings/totals live outside the hashed fields, so analyzing after
-      // chaining cannot break the chain.
-      let run: Run = analyzeRun({
+      // Warnings live outside every hash, so analyzing after chaining cannot
+      // break the chain. Totals do NOT, from hashVersion 2 on — they are part
+      // of the run header the anchor commits to — so the anchor is computed
+      // last, once the header is final.
+      const analyzed: Run = analyzeRun({
         id: runId,
         name: opts.name,
         startedAt,
@@ -206,8 +216,10 @@ export function startRecording(opts: StartRecordingOptions): Recorder {
         totals,
         warnings: [],
         steps,
-        runHash: last.hash,
+        runHash: '',
+        hashVersion,
       });
+      let run: Run = { ...analyzed, runHash: computeRunHash(analyzed) };
 
       const check = verifyRun(run);
       if (!check.ok) throw new Error(`Recorder self-check failed: ${check.message}`);

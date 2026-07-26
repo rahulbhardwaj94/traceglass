@@ -22,7 +22,16 @@ export type StepType = z.infer<typeof StepTypeSchema>;
 
 /**
  * One redaction event on a step: which leaf was destroyed, when, and why.
- * Kept OUT of the hash — redacting must not change the step hash (v0.6).
+ *
+ * Kept OUT of the step hash — redacting must not change the step hash (v0.6),
+ * or the whole point of commitment-based erasure collapses. In `hashVersion: 2`
+ * the log stops being an unverifiable free-text claim in two ways:
+ *   - a committed leaf whose salt is gone MUST have a matching entry here and
+ *     MUST read as the redaction marker, otherwise verification reports the
+ *     leaf as ALTERED rather than as redacted (SPEC §9.4′);
+ *   - the whole log can be sealed by a keyholder (`run.redactionSeal`), which
+ *     is what turns "somebody says this was redacted" into "the keyholder
+ *     attests to exactly these redactions".
  */
 export const RedactionRecordSchema = z.object({
   path: z.string().min(1), // e.g. "input.ssn"
@@ -103,6 +112,30 @@ export const RunSignatureSchema = z.object({
 });
 export type RunSignature = z.infer<typeof RunSignatureSchema>;
 
+/**
+ * Ed25519 attestation over the run's redaction log (`hashVersion: 2`).
+ *
+ * Redaction happens AFTER signing by construction, so the run signature cannot
+ * cover it — the anchor is deliberately unchanged so the original signature
+ * survives. The seal is the second signature that closes the gap: it binds
+ * {runId, runHash, redactionsHash, sealedAt}, so a keyholder attests to exactly
+ * this set of redactions. Fabricating an entry, deleting one, or stripping the
+ * seal all invalidate it, and none of them are possible without the key.
+ *
+ * Absent seal = the redactions are unattested: the record still declares that
+ * data was destroyed (which §9.4′ enforces), but nobody has vouched for it.
+ */
+export const RunRedactionSealSchema = z.object({
+  algorithm: z.literal('ed25519'),
+  keyId: z.string().min(1),
+  publicKey: z.string().min(1), // SPKI PEM
+  signature: z.string().min(1), // base64
+  sealedAt: z.string(), // ISO 8601; part of the sealed message
+  /** sha256 over the run's redaction log; recomputed and compared on verify. */
+  redactionsHash: z.string().min(1),
+});
+export type RunRedactionSeal = z.infer<typeof RunRedactionSealSchema>;
+
 export const RunSchema = z.object({
   id: z.string().min(1),
   name: z.string(),
@@ -113,8 +146,24 @@ export const RunSchema = z.object({
   totals: RunTotalsSchema,
   warnings: z.array(WarningSchema),
   steps: z.array(StepSchema),
-  runHash: z.string(), // hash of final step's hash; the integrity anchor
+  runHash: z.string(), // the integrity anchor (§6)
   signature: RunSignatureSchema.optional(), // absent on unsigned/legacy runs
+  /**
+   * Which hashing rules produced this record's hashes.
+   *
+   * ABSENT means `tgcanon/1` — the implicit original, as published in
+   * 0.3.0–0.8.0. Those records must keep verifying byte-for-byte, so the
+   * absence is load-bearing and MUST NOT be filled in on an existing record.
+   * New captures declare 2.
+   *
+   * Deliberately a plain integer rather than a literal union: a record from a
+   * future version must PARSE (so it can be listed, reported on, and named in
+   * an error) and then be rejected loudly by the verifier, rather than
+   * exploding in the Zod layer as a malformed document.
+   */
+  hashVersion: z.number().int().positive().optional(),
+  /** Keyholder attestation over the redaction log; `hashVersion: 2` only. */
+  redactionSeal: RunRedactionSealSchema.optional(),
 });
 export type Run = z.infer<typeof RunSchema>;
 
