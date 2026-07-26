@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { timingSafeEqual } from 'node:crypto';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import fastifyStatic from '@fastify/static';
@@ -9,6 +9,9 @@ import {
   RunStore,
   renderReport,
   verifyRun,
+  verifyRunFull,
+  evaluatePolicy,
+  parsePolicy,
   discoverSessions,
   findSession,
   readSessionRecords,
@@ -20,8 +23,12 @@ import {
   findLiveRecording,
   liveRunFromJournal,
   readJournal,
+  type Policy,
   type Run,
+  type RunSummary,
+  type WarningKind,
 } from '@traceglass/core';
+import { dataDir } from './paths.js';
 
 const require = createRequire(import.meta.url);
 
@@ -128,6 +135,200 @@ class RateLimiter {
   }
 }
 
+/* ── fleet rollup (v0.10) ──────────────────────────────────────────────────── */
+
+/** Per-kind warning tally for one run. */
+export interface FleetWarnings {
+  loop: number;
+  high_cost_step: number;
+  error: number;
+  total: number;
+}
+
+/**
+ * One row of the fleet view: everything needed to triage a run WITHOUT loading
+ * it. `listRuns` alone cannot answer "which of these went wrong?" — it carries
+ * no warnings, no signature, no integrity verdict — and asking the browser to
+ * fetch every full run to find out would ship megabytes of step payloads to
+ * render a list. So the rollup is computed here, over the same append-only
+ * store, and stays strictly read-only.
+ */
+export interface FleetRun {
+  id: string;
+  name: string;
+  startedAt: string;
+  endedAt: string;
+  ingestedAt: string;
+  status: Run['status'];
+  currency: string;
+  steps: number;
+  tokens: number;
+  cost: number;
+  durationMs: number;
+  runHash: string;
+  warnings: FleetWarnings;
+  /** Warning messages, in run order — the row subtitle in the dashboard. */
+  warningMessages: string[];
+  signed: boolean;
+  keyId: string | null;
+  /** Hash chain recomputed and matched. */
+  chainOk: boolean;
+  /** Signature (when present) validates against its embedded public key. */
+  signatureOk: boolean;
+  /** Human-readable verdict for whichever of the two failed, else chain's. */
+  integrityMessage: string;
+  /** null when no policy is configured on this server. */
+  policyOk: boolean | null;
+  policyViolations: Array<{ rule: string; message: string }>;
+}
+
+/** Where the server's guardrail policy came from, and whether it loaded. */
+export interface FleetPolicyInfo {
+  configured: boolean;
+  name: string | null;
+  /** 'inline' (programmatic), 'env' (TRACEGLASS_POLICY), 'home' (~/.traceglass/policy.json). */
+  source: 'inline' | 'env' | 'home' | null;
+  error: string | null;
+}
+
+export interface FleetResponse {
+  runs: FleetRun[];
+  policy: FleetPolicyInfo;
+  generatedAt: string;
+}
+
+const WARNING_KINDS: readonly WarningKind[] = ['loop', 'high_cost_step', 'error'];
+
+/**
+ * Resolve the guardrail policy the fleet view scores runs against.
+ *
+ * `traceglass check --policy` is per-invocation, but a fleet dashboard needs a
+ * standing answer to "is this run allowed?", so the server takes one policy for
+ * its lifetime: passed in programmatically, or pointed at by TRACEGLASS_POLICY,
+ * or the conventional ~/.traceglass/policy.json. A broken policy file is
+ * reported to the client rather than thrown — the fleet list is still useful
+ * without policy scoring, and silently showing every run as compliant because
+ * the file had a typo would be the worst of the three outcomes.
+ */
+function resolvePolicy(inline?: Policy): { policy: Policy | null; info: FleetPolicyInfo } {
+  const none: FleetPolicyInfo = { configured: false, name: null, source: null, error: null };
+  if (inline) {
+    return {
+      policy: inline,
+      info: { configured: true, name: inline.name ?? null, source: 'inline', error: null },
+    };
+  }
+  const fromEnv = process.env.TRACEGLASS_POLICY;
+  const candidates: Array<{ file: string; source: 'env' | 'home'; required: boolean }> = [
+    ...(fromEnv ? [{ file: fromEnv, source: 'env' as const, required: true }] : []),
+    { file: join(dataDir(), 'policy.json'), source: 'home' as const, required: false },
+  ];
+  for (const candidate of candidates) {
+    if (!existsSync(candidate.file)) {
+      if (!candidate.required) continue;
+      return {
+        policy: null,
+        info: {
+          ...none,
+          configured: true,
+          source: candidate.source,
+          error: `TRACEGLASS_POLICY points at ${candidate.file}, which does not exist.`,
+        },
+      };
+    }
+    try {
+      const policy = parsePolicy(JSON.parse(readFileSync(candidate.file, 'utf8')));
+      return {
+        policy,
+        info: { configured: true, name: policy.name ?? null, source: candidate.source, error: null },
+      };
+    } catch (e) {
+      return {
+        policy: null,
+        info: {
+          ...none,
+          configured: true,
+          source: candidate.source,
+          error: `Could not read policy ${candidate.file}: ${
+            e instanceof Error ? (e.message.split('\n')[0] ?? e.message) : String(e)
+          }`,
+        },
+      };
+    }
+  }
+  return { policy: null, info: none };
+}
+
+/** Roll one stored run up into its fleet row. Pure over the run + policy. */
+function fleetRowFor(run: Run, summary: RunSummary, policy: Policy | null): FleetRun {
+  const counts: FleetWarnings = { loop: 0, high_cost_step: 0, error: 0, total: 0 };
+  for (const w of run.warnings) {
+    if (WARNING_KINDS.includes(w.kind)) counts[w.kind] += 1;
+    counts.total += 1;
+  }
+  const full = verifyRunFull(run);
+  const policyResult = policy ? evaluatePolicy(run, policy) : null;
+  return {
+    id: run.id,
+    name: run.name,
+    startedAt: run.startedAt,
+    endedAt: run.endedAt,
+    ingestedAt: summary.ingestedAt,
+    status: run.status,
+    currency: run.currency,
+    steps: run.totals.steps,
+    tokens: run.totals.tokens,
+    cost: run.totals.cost,
+    durationMs: run.totals.durationMs,
+    runHash: run.runHash,
+    warnings: counts,
+    warningMessages: run.warnings.map((w) => w.message),
+    signed: run.signature !== undefined,
+    keyId: run.signature?.keyId ?? null,
+    chainOk: full.chain.ok,
+    signatureOk: full.signature.ok,
+    integrityMessage: !full.chain.ok
+      ? full.chain.message
+      : !full.signature.ok
+        ? full.signature.message
+        : full.chain.message,
+    policyOk: policyResult ? policyResult.ok : null,
+    policyViolations: policyResult
+      ? policyResult.violations.map((v) => ({ rule: v.rule, message: v.message }))
+      : [],
+  };
+}
+
+/**
+ * Memo for fleet rows, keyed by the run's own integrity anchor.
+ *
+ * Rolling a run up means parsing it and re-hashing every step, and the fleet
+ * view polls. The store is append-only, so a row can only change if the run
+ * itself changed — and the only in-place path (redaction) rewrites `runHash` by
+ * construction. Keying on id + runHash + ingestedAt therefore makes a stale hit
+ * impossible rather than merely unlikely.
+ */
+class FleetCache {
+  private rows = new Map<string, FleetRun>();
+  private static readonly MAX = 4096;
+
+  get(key: string): FleetRun | undefined {
+    return this.rows.get(key);
+  }
+
+  set(key: string, row: FleetRun): void {
+    this.rows.set(key, row);
+  }
+
+  /** Drop everything not referenced by the current listing (prunes, redactions). */
+  retain(liveKeys: Set<string>): void {
+    if (this.rows.size <= FleetCache.MAX && this.rows.size === liveKeys.size) return;
+    for (const key of this.rows.keys()) {
+      if (!liveKeys.has(key)) this.rows.delete(key);
+    }
+  }
+}
+
 export interface ServerOptions {
   /** Bearer token required for all POST routes (and GETs when requireAuthForReads). */
   token?: string;
@@ -141,6 +342,11 @@ export interface ServerOptions {
   bodyLimit?: number;
   /** Ingest requests per IP per minute; 0 disables (default DEFAULT_RATE_LIMIT). */
   rateLimit?: number;
+  /**
+   * Guardrail policy the fleet view scores every run against. Overrides the
+   * TRACEGLASS_POLICY / ~/.traceglass/policy.json discovery.
+   */
+  policy?: Policy;
 }
 
 function tokenMatches(header: string | undefined, token: string): boolean {
@@ -296,6 +502,35 @@ export function buildServer(store: RunStore, opts: ServerOptions = {}): FastifyI
   }
 
   app.get('/api/runs', async () => store.listRuns());
+
+  /*
+   * Fleet rollup (v0.10): every stored run scored for triage in one response.
+   * Read-only by construction — it opens no write path the other GETs don't.
+   */
+  const { policy: fleetPolicy, info: fleetPolicyInfo } = resolvePolicy(opts.policy);
+  const fleetCache = new FleetCache();
+  app.get('/api/fleet', async (): Promise<FleetResponse> => {
+    const summaries = store.listRuns();
+    const keys = new Set<string>();
+    const runs: FleetRun[] = [];
+    for (const summary of summaries) {
+      const key = `${summary.id} ${summary.runHash} ${summary.ingestedAt}`;
+      keys.add(key);
+      const cached = fleetCache.get(key);
+      if (cached) {
+        runs.push(cached);
+        continue;
+      }
+      const run = store.getRun(summary.id);
+      // Raced with a prune between listing and loading — simply not in the fleet.
+      if (!run) continue;
+      const row = fleetRowFor(run, summary, fleetPolicy);
+      fleetCache.set(key, row);
+      runs.push(row);
+    }
+    fleetCache.retain(keys);
+    return { runs, policy: fleetPolicyInfo, generatedAt: new Date().toISOString() };
+  });
 
   app.get<{ Params: { id: string } }>('/api/runs/:id', async (req, reply) => {
     const run = store.getRun(req.params.id);

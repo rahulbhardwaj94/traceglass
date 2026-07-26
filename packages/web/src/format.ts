@@ -20,6 +20,24 @@ export function stepTypeLabel(type: StepType): string {
   return type.replace(/_/g, ' ');
 }
 
+/**
+ * Compact relative age, e.g. "3m ago". Empty string for an unusable date —
+ * a listing should say nothing rather than print "NaN ago" or "Invalid Date".
+ */
+export function relTime(iso: string, now: number = Date.now()): string {
+  if (!iso) return '';
+  const at = Date.parse(iso);
+  if (!Number.isFinite(at)) return '';
+  const mins = Math.round((now - at) / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.round(hrs / 24);
+  if (days < 30) return `${days}d ago`;
+  return `${Math.round(days / 30)}mo ago`;
+}
+
 /** Integer with thousands separators. */
 export function commas(n: number): string {
   return Math.round(n).toLocaleString('en-US');

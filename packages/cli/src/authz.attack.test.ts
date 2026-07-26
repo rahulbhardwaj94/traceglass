@@ -86,6 +86,7 @@ const URL_VARIANTS = [
   '/api/live',
   '/api/live/confidential-run-7731',
   '/api/sessions',
+  '/api/fleet',
   // percent-encoded (the v0.7.2 bug)
   '/%61pi/runs',
   '/a%70i/runs',
@@ -96,6 +97,8 @@ const URL_VARIANTS = [
   '/%61pi/runs/confidential-run-7731',
   '/%61pi/search?q=7731',
   '/%61pi/live/confidential-run-7731',
+  '/%61pi/fleet',
+  '/api/%66leet',
   // double-encoded
   '/%2561pi/runs',
   '/%25%36%31pi/runs',
@@ -198,6 +201,7 @@ describe('ATTACK 7: read-authorization fuzzing across every route', () => {
       '/api/live',
       `/api/live/${run.id}`,
       '/api/sessions',
+      '/api/fleet',
       '/%61pi/runs',
       '/api/%72uns',
     ]) {

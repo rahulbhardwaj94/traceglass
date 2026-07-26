@@ -1,11 +1,12 @@
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { generateKeyPairSync } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { RunStore, ingestAndFinalize, type Run } from '@traceglass/core';
-import { buildServer } from './server.js';
+import { RunStore, ingestAndFinalize, signRun, type Run } from '@traceglass/core';
+import { buildServer, type FleetResponse } from './server.js';
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), '../../../fixtures');
 const loopRaw = JSON.parse(readFileSync(join(fixturesDir, 'sample-run-loop.json'), 'utf8'));
@@ -125,6 +126,186 @@ describe('search API (v0.4)', () => {
     expect((await app.inject({ method: 'GET', url: '/api/search' })).statusCode).toBe(400);
     const limited = await app.inject({ method: 'GET', url: '/api/search?q=a&limit=2' });
     expect((limited.json() as unknown[]).length).toBeLessThanOrEqual(2);
+  });
+});
+
+describe('fleet API (v0.10)', () => {
+  // Policy discovery falls back to <TRACEGLASS_HOME>/policy.json, so point HOME
+  // at an empty temp dir — otherwise the developer's own policy file decides
+  // whether these assertions hold.
+  let policyHome: string;
+  let priorHome: string | undefined;
+  beforeAll(() => {
+    priorHome = process.env.TRACEGLASS_HOME;
+    policyHome = mkdtempSync(join(tmpdir(), 'tg-fleet-home-'));
+    process.env.TRACEGLASS_HOME = policyHome;
+  });
+  afterAll(() => {
+    if (priorHome === undefined) delete process.env.TRACEGLASS_HOME;
+    else process.env.TRACEGLASS_HOME = priorHome;
+    rmSync(policyHome, { recursive: true, force: true });
+  });
+
+  /** A store holding: the loop fixture, a signed run, and a tampered run. */
+  async function fleetApp(opts: Parameters<typeof buildServer>[1] = {}) {
+    const s = new RunStore(':memory:');
+    s.saveRun(run);
+
+    const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+    const clean = ingestAndFinalize({
+      id: 'fleet-clean',
+      name: 'clean signed agent',
+      currency: 'USD',
+      steps: [
+        {
+          type: 'tool_call',
+          toolName: 'payments.refund',
+          label: 'Tool: payments.refund',
+          startedAt: '2026-01-01T00:00:00.000Z',
+          durationMs: 5,
+          cost: 0.25,
+          tokens: 100,
+        },
+      ],
+    });
+    s.saveRun(
+      signRun(
+        clean,
+        privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+        publicKey.export({ type: 'spki', format: 'pem' }).toString(),
+      ),
+    );
+
+    // A run whose stored bytes no longer match its own hash chain.
+    const honest = ingestAndFinalize({
+      id: 'fleet-tampered',
+      name: 'rewritten history',
+      currency: 'USD',
+      steps: [
+        {
+          type: 'tool_call',
+          toolName: 'get_status',
+          label: 'Tool: get_status',
+          startedAt: '2026-01-01T00:00:00.000Z',
+          durationMs: 5,
+          output: { status: 'overdue' },
+        },
+      ],
+    });
+    s.saveRun({
+      ...honest,
+      steps: [{ ...honest.steps[0]!, output: { status: 'paid' } }],
+    });
+
+    const a = buildServer(s, opts);
+    await a.ready();
+    return { s, a };
+  }
+
+  it('GET /api/fleet rolls every stored run up for triage', async () => {
+    const { s, a } = await fleetApp();
+    try {
+      const res = await a.inject({ method: 'GET', url: '/api/fleet' });
+      expect(res.statusCode).toBe(200);
+      const body = res.json() as FleetResponse;
+      const byId = new Map(body.runs.map((r) => [r.id, r]));
+      expect(byId.size).toBe(3);
+
+      // The loop fixture carries warnings — the whole point of the list.
+      const loop = byId.get(run.id)!;
+      expect(loop.warnings.total).toBe(run.warnings.length);
+      expect(loop.warnings.loop).toBeGreaterThan(0);
+      expect(loop.warningMessages.length).toBe(run.warnings.length);
+      expect(loop.steps).toBe(run.totals.steps);
+      expect(loop.signed).toBe(false);
+      expect(loop.chainOk).toBe(true);
+
+      const clean = byId.get('fleet-clean')!;
+      expect(clean.signed).toBe(true);
+      expect(clean.keyId).toMatch(/^[0-9a-f]{16}$/);
+      expect(clean.signatureOk).toBe(true);
+      expect(clean.warnings.total).toBe(0);
+
+      const tampered = byId.get('fleet-tampered')!;
+      expect(tampered.chainOk).toBe(false);
+      expect(tampered.integrityMessage).toMatch(/step/i);
+
+      // No policy configured → scoring is null, not a fabricated pass.
+      expect(body.policy.configured).toBe(false);
+      expect(body.runs.every((r) => r.policyOk === null)).toBe(true);
+    } finally {
+      await a.close();
+      s.close();
+    }
+  });
+
+  it('scores every run against a configured policy', async () => {
+    const { s, a } = await fleetApp({
+      policy: { name: 'no refunds', rules: { forbidTools: ['payments.*'], requireSignature: true } },
+    });
+    try {
+      const body = (await a.inject({ method: 'GET', url: '/api/fleet' })).json() as FleetResponse;
+      expect(body.policy).toMatchObject({ configured: true, name: 'no refunds', source: 'inline' });
+
+      const clean = body.runs.find((r) => r.id === 'fleet-clean')!;
+      expect(clean.policyOk).toBe(false);
+      expect(clean.policyViolations.map((v) => v.rule)).toContain('forbidTools');
+
+      // The unsigned fixture trips requireSignature instead.
+      const loop = body.runs.find((r) => r.id === run.id)!;
+      expect(loop.policyOk).toBe(false);
+      expect(loop.policyViolations.map((v) => v.rule)).toContain('requireSignature');
+    } finally {
+      await a.close();
+      s.close();
+    }
+  });
+
+  it('serves a repeat request from cache without changing the answer', async () => {
+    const { s, a } = await fleetApp();
+    try {
+      const first = (await a.inject({ method: 'GET', url: '/api/fleet' })).json() as FleetResponse;
+      const second = (await a.inject({ method: 'GET', url: '/api/fleet' })).json() as FleetResponse;
+      expect(second.runs).toEqual(first.runs);
+    } finally {
+      await a.close();
+      s.close();
+    }
+  });
+
+  it('reports a broken policy file instead of silently passing every run', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tg-policy-'));
+    const file = join(dir, 'policy.json');
+    writeFileSync(file, '{ not json');
+    process.env.TRACEGLASS_POLICY = file;
+    try {
+      const { s, a } = await fleetApp();
+      try {
+        const body = (await a.inject({ method: 'GET', url: '/api/fleet' })).json() as FleetResponse;
+        expect(body.policy.configured).toBe(true);
+        expect(body.policy.error).toMatch(/Could not read policy/);
+        expect(body.runs.every((r) => r.policyOk === null)).toBe(true);
+      } finally {
+        await a.close();
+        s.close();
+      }
+    } finally {
+      delete process.env.TRACEGLASS_POLICY;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('is a read route: the fleet never exposes a write path', async () => {
+    const { s, a } = await fleetApp();
+    try {
+      for (const method of ['POST', 'PUT', 'PATCH', 'DELETE'] as const) {
+        const res = await a.inject({ method, url: '/api/fleet' });
+        expect(res.statusCode).toBe(404);
+      }
+    } finally {
+      await a.close();
+      s.close();
+    }
   });
 });
 

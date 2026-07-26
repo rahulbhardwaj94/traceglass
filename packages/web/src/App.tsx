@@ -12,6 +12,7 @@ import { ReasoningPanel } from './components/ReasoningPanel.js';
 import { Totals } from './components/Totals.js';
 import { Warnings } from './components/Warnings.js';
 import { SessionPicker } from './components/SessionPicker.js';
+import { FleetView } from './components/FleetView.js';
 
 const PLAY_INTERVAL_MS = 700;
 const LIVE_POLL_MS = 800;
@@ -23,10 +24,16 @@ export function App() {
   const [selected, setSelected] = useState(0);
   const [playing, setPlaying] = useState(false);
 
-  // With no run id in the URL, show the session picker landing screen.
+  /*
+   * Routing, in precedence order:
+   *   ?run=<id>  → sealed replay        ?live=<id> → live tail
+   *   ?picker=1  → Claude Code session picker (what `traceglass open` links to)
+   *   nothing    → the fleet: every run this collector holds
+   */
   const runId = runIdFromUrl();
   const liveId = liveIdFromUrl();
-  const showPicker = pickerFromUrl() || (!runId && !liveId);
+  const showPicker = pickerFromUrl();
+  const showFleet = !showPicker && !runId && !liveId;
 
   /*
    * Tail mode (v0.7): poll the in-progress recording's journal and follow the
@@ -124,6 +131,10 @@ export function App() {
   const loopIds = useMemo(() => (run ? loopStepIdSet(run) : new Set<string>()), [run]);
   const indexById = useMemo(() => (run ? indexStepsById(run.steps) : new Map()), [run]);
   const median = useMemo(() => (run ? medianNonZeroCost(run.steps) : 0), [run]);
+
+  if (showFleet) {
+    return <FleetView />;
+  }
 
   if (showPicker) {
     return <SessionPicker />;

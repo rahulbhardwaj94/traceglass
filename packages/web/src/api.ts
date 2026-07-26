@@ -1,4 +1,12 @@
-import type { Run, RunSummary, SessionInfo, VerifyResult } from './types.js';
+import type {
+  FleetResponse,
+  LiveRecording,
+  Run,
+  RunSummary,
+  SearchHit,
+  SessionInfo,
+  VerifyResult,
+} from './types.js';
 
 async function getJson<T>(url: string): Promise<T> {
   const res = await fetch(url);
@@ -19,6 +27,13 @@ export const api = {
   reportUrl: (id: string) => `/api/runs/${encodeURIComponent(id)}/report`,
   listSessions: () => getJson<SessionInfo[]>('/api/sessions'),
   liveRun: (id: string) => getJson<Run>(`/api/live/${encodeURIComponent(id)}`),
+  /** Fleet rollup: every stored run, scored for triage (v0.10). */
+  fleet: () => getJson<FleetResponse>('/api/fleet'),
+  /** In-progress recordings, still being written to their journals. */
+  liveRuns: () => getJson<LiveRecording[]>('/api/live'),
+  /** Cross-run step search — the "which runs touched X?" sweep. */
+  search: (q: string, limit = 200) =>
+    getJson<SearchHit[]>(`/api/search?q=${encodeURIComponent(q)}&limit=${limit}`),
   ingestSession: (id: string) =>
     postJson<{ runId: string }>(`/api/sessions/${encodeURIComponent(id)}/ingest`),
 };

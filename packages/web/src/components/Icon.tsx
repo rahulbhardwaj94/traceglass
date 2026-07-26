@@ -14,7 +14,11 @@ export type IconName =
   | 'shield'
   | 'loop'
   | 'cost'
-  | 'alert';
+  | 'alert'
+  | 'unsigned'
+  | 'policy'
+  | 'search'
+  | 'refresh';
 
 export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
   const s = { width: size, height: size, display: 'block' } as const;
@@ -129,6 +133,44 @@ export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
           <g {...sw}>
             <path d="M12 4 2.5 20h19z" />
             <path d="M12 10v4M12 17.5v.01" />
+          </g>
+        </svg>
+      );
+    case 'unsigned':
+      // Shield with a strike-through: sealed shape, no attestation.
+      return (
+        <svg style={s} viewBox="0 0 24 24">
+          <g {...sw}>
+            <path d="M12 3l7 3v5c0 4.5-3 7.8-7 9-4-1.2-7-4.5-7-9V6z" />
+            <path d="M5 4l14 16" />
+          </g>
+        </svg>
+      );
+    case 'policy':
+      // A ruled document — the guardrail policy the run was scored against.
+      return (
+        <svg style={s} viewBox="0 0 24 24">
+          <g {...sw}>
+            <path d="M6 3h8l4 4v14H6z" />
+            <path d="M14 3v4h4M9 12h6M9 16h4" />
+          </g>
+        </svg>
+      );
+    case 'search':
+      return (
+        <svg style={s} viewBox="0 0 24 24">
+          <g {...sw}>
+            <circle cx="11" cy="11" r="6" />
+            <path d="M15.5 15.5L20 20" />
+          </g>
+        </svg>
+      );
+    case 'refresh':
+      return (
+        <svg style={s} viewBox="0 0 24 24">
+          <g {...sw}>
+            <path d="M20 12a8 8 0 1 1-2.34-5.66" />
+            <path d="M20 4v5h-5" />
           </g>
         </svg>
       );
