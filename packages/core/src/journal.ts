@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { RunStatusSchema, StepSchema, type Run, type RunStatus, type Step } from './model.js';
 import { analyzeRun } from './analyze/index.js';
+import { computeRunHash } from './integrity/hash.js';
 import { verifyRun } from './integrity/verify.js';
 import { z } from 'zod';
 
@@ -26,6 +27,15 @@ const MetaLineSchema = z.object({
   name: z.string(),
   currency: z.string(),
   startedAt: z.string(),
+  /**
+   * Which hashing rules the recorder chained these steps under. Absent on
+   * journals written before this field existed, which were `tgcanon/1` — so the
+   * absence must keep meaning 1, and an orphaned pre-upgrade journal still
+   * recovers. The journal format version itself is unchanged: this is an
+   * optional member, and §10.2's "ignore unknown members" rule means an older
+   * build reading a newer journal degrades exactly as it always would.
+   */
+  hashVersion: z.number().int().positive().optional(),
 });
 export type JournalMeta = z.infer<typeof MetaLineSchema>;
 
@@ -159,6 +169,7 @@ export function liveRunFromJournal(contents: JournalContents): Run {
     warnings: [],
     steps,
     runHash: '', // not yet anchored
+    ...(meta.hashVersion !== undefined ? { hashVersion: meta.hashVersion } : {}),
   });
 }
 
@@ -187,7 +198,10 @@ export function finalizeJournal(contents: JournalContents): Run {
     }),
     { tokens: 0, cost: 0, durationMs: 0, steps: 0 },
   );
-  const run: Run = analyzeRun({
+  // The steps were chained at capture time and are used exactly as recorded, so
+  // only the anchor is derived here — under the version the journal declares,
+  // never under whatever this build would emit for a fresh capture.
+  const partial: Run = analyzeRun({
     id: meta.id,
     name: meta.name,
     startedAt: meta.startedAt,
@@ -197,8 +211,10 @@ export function finalizeJournal(contents: JournalContents): Run {
     totals,
     warnings: [],
     steps,
-    runHash: last.hash,
+    runHash: '',
+    ...(meta.hashVersion !== undefined ? { hashVersion: meta.hashVersion } : {}),
   });
+  const run: Run = { ...partial, runHash: computeRunHash(partial) };
   const check = verifyRun(run);
   if (!check.ok) {
     throw new Error(`Journal for run "${meta.id}" fails integrity: ${check.message}`);

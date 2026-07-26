@@ -187,8 +187,16 @@ describe('v0.3 outcome test', () => {
     };
     rechained.runHash = prevHash;
     const rechainedResult = verifyRunFull(rechained);
-    expect(rechainedResult.chain.ok).toBe(true); // chain alone is fooled
-    expect(rechainedResult.signature.ok).toBe(false); // signature is not
+
+    // Under tgcanon/1 this attack passed the chain check outright — re-chaining
+    // every step produced a self-consistent run, and only the signature caught
+    // it. tgcanon/2 covers run metadata, so `totals.cost` still reflects the
+    // real spend the attacker was trying to hide and the chain refuses it too.
+    // Both layers now catch it; the signature remains the backstop for an
+    // attacker who also rewrites the totals.
+    expect(rechainedResult.chain.ok).toBe(false);
+    expect(rechainedResult.signature.ok).toBe(false);
+    expect(rechainedResult.ok).toBe(false);
   });
 
   it('8. retention prunes only old runs and the pruned list is auditable', () => {

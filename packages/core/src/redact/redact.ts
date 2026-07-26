@@ -1,10 +1,21 @@
 import type { Run, Step, RedactionRecord } from '../model.js';
-import { COMMITTED_FIELDS, hashStep, type CommittedField } from '../integrity/hash.js';
+import {
+  COMMITTED_FIELDS,
+  DEFAULT_HASH_VERSION,
+  chainSteps,
+  computeRunHash,
+  hashVersionOf,
+  isSupportedHashVersion,
+  type CommittedField,
+  type HashVersion,
+} from '../integrity/hash.js';
+import { sealRedactions } from '../integrity/signing.js';
 import {
   REDACTED_MARKER,
   buildCommitments,
-  getAtPath,
-  setAtPath,
+  getAtTokens,
+  setAtTokens,
+  splitCommitmentPath,
   walkLeaves,
   type CommitmentMap,
   type SaltMap,
@@ -84,6 +95,7 @@ export function scrubPayload(
   field: CommittedField,
   value: unknown,
   patterns: RedactionPattern[],
+  version: HashVersion = DEFAULT_HASH_VERSION,
 ): ScrubResult<unknown> {
   const hits: Array<{ path: string; pattern: string }> = [];
   let out = value;
@@ -93,10 +105,11 @@ export function scrubPayload(
       const pattern = matchPattern(leaf, patterns);
       if (!pattern) return;
       hits.push({ path, pattern });
-      const relative = path.slice(field.length).replace(/^\./, '');
-      out = setAtPath(out, relative, REDACTED_MARKER);
+      const { tokens } = splitCommitmentPath(path, version);
+      out = setAtTokens(out, tokens, REDACTED_MARKER);
     },
     field,
+    version,
   );
   return { value: out, hits };
 }
@@ -105,6 +118,7 @@ export function scrubPayload(
 export function scrubStepPayload(
   payload: { input?: unknown; output?: unknown; dataPayload?: unknown },
   patterns: RedactionPattern[],
+  version: HashVersion = DEFAULT_HASH_VERSION,
 ): {
   payload: { input?: unknown; output?: unknown; dataPayload?: unknown };
   redactions: RedactionRecord[];
@@ -114,7 +128,7 @@ export function scrubStepPayload(
   const at = new Date().toISOString();
   for (const field of COMMITTED_FIELDS) {
     if (next[field] === undefined) continue;
-    const { value, hits } = scrubPayload(field, next[field], patterns);
+    const { value, hits } = scrubPayload(field, next[field], patterns, version);
     next[field] = value;
     for (const hit of hits) {
       redactions.push({ path: hit.path, at, reason: `pattern:${hit.pattern}`, by: 'pattern' });
@@ -124,7 +138,11 @@ export function scrubStepPayload(
 }
 
 /** Find committed leaf paths in a step whose values match any pattern. */
-export function findPatternPaths(step: Step, patterns: RedactionPattern[]): string[] {
+export function findPatternPaths(
+  step: Step,
+  patterns: RedactionPattern[],
+  version: HashVersion = DEFAULT_HASH_VERSION,
+): string[] {
   const paths: string[] = [];
   for (const field of COMMITTED_FIELDS) {
     if (step[field] === undefined) continue;
@@ -135,6 +153,7 @@ export function findPatternPaths(step: Step, patterns: RedactionPattern[]): stri
         if (matchPattern(leaf, patterns)) paths.push(path);
       },
       field,
+      version,
     );
   }
   return paths;
@@ -153,8 +172,9 @@ export class RedactionError extends Error {}
 export function redactStep(
   step: Step,
   path: string,
-  opts: { reason?: string; by?: RedactionRecord['by'] } = {},
+  opts: { reason?: string; by?: RedactionRecord['by']; hashVersion?: HashVersion } = {},
 ): Step {
+  const version = opts.hashVersion ?? 1;
   if (!step.commitments) {
     throw new RedactionError(
       `Step ${step.id} carries no commitments (recorded before v0.6). Redact it with the legacy path, which re-chains and re-signs the run.`,
@@ -163,18 +183,17 @@ export function redactStep(
   if (!(path in step.commitments)) {
     throw new RedactionError(`Step ${step.id} has no committed leaf at "${path}".`);
   }
-  const field = path.split(/[.[]/)[0] as CommittedField;
-  if (!COMMITTED_FIELDS.includes(field)) {
+  const { field, tokens } = splitCommitmentPath(path, version);
+  if (!COMMITTED_FIELDS.includes(field as CommittedField)) {
     throw new RedactionError(`Path "${path}" does not target a payload field.`);
   }
-  const relative = path.slice(field.length).replace(/^\./, '');
 
   const salts: SaltMap = { ...(step.salts ?? {}) };
   delete salts[path]; // destroying the salt is what makes this irreversible
 
   const next: Step = {
     ...step,
-    [field]: setAtPath(step[field], relative, REDACTED_MARKER),
+    [field]: setAtTokens(step[field as CommittedField], tokens, REDACTED_MARKER),
     salts,
     redactions: [
       ...(step.redactions ?? []),
@@ -199,6 +218,12 @@ export interface RedactRunResult {
  * Redact leaves across a run by explicit `<stepId>#<path>` targets and/or by
  * pattern match. The run's `runHash` and every step `hash` are unchanged; the
  * caller can (and the CLI does) verify the chain afterwards to prove it.
+ *
+ * On a `hashVersion: 2` record, pass `sealWith` to attest to the result. A
+ * sealed redaction is one a keyholder has signed for; an unsealed one is a
+ * declared-but-unattested claim by whoever last wrote the file. Both verify —
+ * the difference is reported, not hidden — but only the sealed form can be
+ * defended as authorised.
  */
 export function redactRun(
   run: Run,
@@ -206,8 +231,11 @@ export function redactRun(
     paths?: string[]; // "stepId#input.ssn", or "input.ssn" to apply to every step
     patterns?: RedactionPattern[];
     reason?: string;
+    /** Keys to seal the redaction log with (`hashVersion: 2`). */
+    sealWith?: { privateKeyPem: string; publicKeyPem: string };
   },
 ): RedactRunResult {
+  const version = redactionVersionOf(run);
   const redacted: string[] = [];
   const steps = run.steps.map((step) => {
     let next = step;
@@ -219,7 +247,7 @@ export function redactRun(
       if (leafPath) targets.add(leafPath);
     }
     if (opts.patterns && opts.patterns.length > 0) {
-      for (const p of findPatternPaths(step, opts.patterns)) targets.add(p);
+      for (const p of findPatternPaths(step, opts.patterns, version)) targets.add(p);
     }
 
     for (const path of targets) {
@@ -227,13 +255,24 @@ export function redactRun(
       next = redactStep(next, path, {
         ...(opts.reason !== undefined ? { reason: opts.reason } : {}),
         by: opts.patterns && opts.patterns.length > 0 ? 'pattern' : 'manual',
+        hashVersion: version,
       });
       redacted.push(`${step.id}#${path}`);
     }
     return next;
   });
 
-  return { run: { ...run, steps }, redacted };
+  let next: Run = { ...run, steps };
+  if (opts.sealWith && version === 2) {
+    next = sealRedactions(next, opts.sealWith.privateKeyPem, opts.sealWith.publicKeyPem);
+  }
+  return { run: next, redacted };
+}
+
+/** The path/redaction rules a run's own declared version implies. */
+function redactionVersionOf(run: Run): HashVersion {
+  const declared = hashVersionOf(run);
+  return isSupportedHashVersion(declared) ? declared : 1;
 }
 
 /**
@@ -248,11 +287,17 @@ export function redactRun(
  * the distinction — `traceglass redact --legacy` says so explicitly.
  *
  * Returns the re-chained run; the `runHash` WILL differ from the original.
+ *
+ * The re-chain preserves whatever version the record declared. A pre-0.6 record
+ * declares nothing, so it stays `tgcanon/1`: silently promoting it to 2 would
+ * change the hashed field set of a record whose provenance is already the weak
+ * point here, and would surprise anyone diffing it against the original.
  */
 export function redactLegacyRun(
   run: Run,
   opts: { paths?: string[]; patterns?: RedactionPattern[]; reason?: string },
 ): RedactRunResult & { previousRunHash: string } {
+  const version = redactionVersionOf(run);
   const previousRunHash = run.runHash;
   const redacted: string[] = [];
   const at = new Date().toISOString();
@@ -276,18 +321,19 @@ export function redactLegacyRun(
             if (matchPattern(leaf, opts.patterns!)) targets.add(path);
           },
           field,
+          version,
         );
       }
     }
 
     for (const path of targets) {
-      const field = path.split(/[.[]/)[0] as CommittedField;
-      if (!COMMITTED_FIELDS.includes(field)) continue;
-      const relative = path.slice(field.length).replace(/^\./, '');
-      if (getAtPath(next[field], relative) === undefined) continue;
+      const { field, tokens } = splitCommitmentPath(path, version);
+      if (!COMMITTED_FIELDS.includes(field as CommittedField)) continue;
+      const payloadField = field as CommittedField;
+      if (getAtTokens(next[payloadField], tokens) === undefined) continue;
       next = {
         ...next,
-        [field]: setAtPath(next[field], relative, REDACTED_MARKER),
+        [payloadField]: setAtTokens(next[payloadField], tokens, REDACTED_MARKER),
         redactions: [
           ...(next.redactions ?? []),
           {
@@ -304,22 +350,18 @@ export function redactLegacyRun(
   });
 
   // Re-chain: the raw values were hashed, so their removal moves every hash.
-  let prevHash = '';
-  const rechained = steps.map((step) => {
-    const withPrev = { ...step, prevHash };
-    const hash = hashStep(withPrev, prevHash);
-    prevHash = hash;
-    return { ...withPrev, hash };
-  });
+  const rechained = chainSteps(steps, version);
+  const rebuilt: Run = {
+    ...run,
+    steps: rechained,
+    // The old signature covered the old anchor; it is now meaningless. So is
+    // any redaction seal, which bound the old anchor too.
+    ...(run.signature ? { signature: undefined } : {}),
+    ...(run.redactionSeal ? { redactionSeal: undefined } : {}),
+  };
 
   return {
-    run: {
-      ...run,
-      steps: rechained,
-      runHash: prevHash,
-      // The old signature covered the old anchor; it is now meaningless.
-      ...(run.signature ? { signature: undefined } : {}),
-    },
+    run: { ...rebuilt, runHash: computeRunHash(rebuilt) },
     redacted,
     previousRunHash,
   };
@@ -328,10 +370,17 @@ export function redactLegacyRun(
 /**
  * Attach commitments to a step-like payload — used by capture paths (SDK,
  * ingest) to make a record redactable later.
+ *
+ * `version` selects the path syntax; it MUST match the version the enclosing
+ * run is chained under, because the commitment paths are hashed as the keys of
+ * the commitment view (SPEC §5.2).
  */
 export function withCommitments<
   T extends { input?: unknown; output?: unknown; dataPayload?: unknown },
->(payload: T): T & { commitments: CommitmentMap; salts: SaltMap } {
-  const { commitments, salts } = buildCommitments(payload);
+>(
+  payload: T,
+  version: HashVersion = DEFAULT_HASH_VERSION,
+): T & { commitments: CommitmentMap; salts: SaltMap } {
+  const { commitments, salts } = buildCommitments(payload, version);
   return { ...payload, commitments, salts };
 }

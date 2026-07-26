@@ -117,13 +117,24 @@ const HASHED_FIELDS = [
   'id', 'index', 'type', 'label', 'startedAt', 'durationMs', 'tokens', 'cost',
   'toolName', 'input', 'output', 'dataPayload', 'spanId', 'parentSpanId',
 ];
+/** SPEC §15.2 — tgcanon/2 adds runId. */
+const HASHED_FIELDS_V2 = ['runId', ...HASHED_FIELDS];
 const COMMITTED_FIELDS = ['input', 'output', 'dataPayload'];
+const REDACTED_MARKER = '[traceglass:redacted]';
+
+/** SPEC §15.1 — the v2 preimage separator, U+0000. */
+const NUL = String.fromCharCode(0);
 
 const sha256 = (s) => createHash('sha256').update(s, 'utf8').digest('hex');
 
-function canonicalStep(step) {
+/** The version a record declares; absent means the implicit original (SPEC §15). */
+const versionOf = (run) => run.hashVersion ?? 1;
+
+function canonicalStep(step, version = 1) {
   const picked = {};
-  for (const f of HASHED_FIELDS) if (step[f] !== undefined) picked[f] = step[f];
+  for (const f of version === 2 ? HASHED_FIELDS_V2 : HASHED_FIELDS) {
+    if (step[f] !== undefined) picked[f] = step[f];
+  }
   if (step.commitments) {
     for (const field of COMMITTED_FIELDS) {
       const view = {};
@@ -136,19 +147,52 @@ function canonicalStep(step) {
   return canonicalize(picked);
 }
 
-const hashStep = (step, prevHash) => sha256(canonicalStep(step) + prevHash);
+const hashStep = (step, prevHash, version = 1) =>
+  version === 2
+    ? sha256(`tgstep/2${NUL}${canonicalStep(step, 2)}${NUL}${prevHash}`)
+    : sha256(canonicalStep(step, 1) + prevHash);
 
-/** SPEC §8.1 */
-function walkLeaves(value, visit, basePath = '') {
+/** SPEC §15.4 — the v2 run anchor is a hash over the run header. */
+function runHashOf(run, anchor) {
+  if (run.steps.length === 0) return '';
+  if (versionOf(run) !== 2) return anchor;
+  const header = {
+    hashVersion: 2,
+    id: run.id,
+    name: run.name,
+    startedAt: run.startedAt,
+    endedAt: run.endedAt,
+    status: run.status,
+    currency: run.currency,
+    totals: {
+      tokens: run.totals.tokens,
+      cost: run.totals.cost,
+      durationMs: run.totals.durationMs,
+      steps: run.totals.steps,
+    },
+    stepCount: run.steps.length,
+    chainAnchor: anchor,
+  };
+  return sha256(`tgrun/2${NUL}${canonicalize(header)}`);
+}
+
+/** SPEC §15.3 — escape a key segment for a v2 path. */
+const escapeSegment = (k) => k.replace(/[\\.[]/g, (c) => '\\' + c);
+
+/** SPEC §8.1 / §15.3 */
+function walkLeaves(value, visit, basePath = '', version = 1) {
   if (Array.isArray(value)) {
     if (value.length === 0) return visit(basePath, value);
-    value.forEach((item, i) => walkLeaves(item, visit, `${basePath}[${i}]`));
+    value.forEach((item, i) => walkLeaves(item, visit, `${basePath}[${i}]`, version));
     return;
   }
   if (value !== null && typeof value === 'object') {
     const keys = Object.keys(value);
     if (keys.length === 0) return visit(basePath, value);
-    for (const k of keys) walkLeaves(value[k], visit, basePath === '' ? k : `${basePath}.${k}`);
+    for (const k of keys) {
+      const seg = version === 2 ? escapeSegment(k) : k;
+      walkLeaves(value[k], visit, basePath === '' ? seg : `${basePath}.${seg}`, version);
+    }
     return;
   }
   visit(basePath, value);
@@ -156,7 +200,7 @@ function walkLeaves(value, visit, basePath = '') {
 
 const commitmentFor = (salt, value) => sha256(salt + canonicalize(value));
 
-/** SPEC §8.1 — path tokenization. */
+/** SPEC §8.1 — v1 path tokenization. */
 function tokenizePath(path) {
   const tokens = [];
   for (const part of path.split('.')) {
@@ -168,14 +212,68 @@ function tokenizePath(path) {
   return tokens;
 }
 
-function getAtPath(root, path) {
-  if (path === '') return root;
+/** SPEC §15.3 — v2 path tokenization: escape-aware, keeps empty segments. */
+function tokenizePathV2(path) {
+  const tokens = [];
+  let seg = '';
+  let segOpen = true;
+  for (let i = 0; i < path.length; i++) {
+    const c = path[i];
+    if (c === '\\' && i + 1 < path.length) { seg += path[++i]; segOpen = true; continue; }
+    if (c === '.') {
+      if (segOpen) { tokens.push(seg); seg = ''; }
+      segOpen = true;
+      continue;
+    }
+    if (c === '[') {
+      const close = path.indexOf(']', i);
+      const digits = close === -1 ? null : path.slice(i + 1, close);
+      if (digits !== null && /^\d+$/.test(digits)) {
+        if (segOpen) { tokens.push(seg); seg = ''; }
+        tokens.push(digits);
+        segOpen = false;
+        i = close;
+        continue;
+      }
+    }
+    seg += c;
+    segOpen = true;
+  }
+  if (segOpen) tokens.push(seg);
+  return tokens;
+}
+
+/** Split a commitment path into its payload field and the tokens inside it. */
+function splitCommitmentPath(path, version) {
+  if (version === 2) {
+    const t = tokenizePathV2(path);
+    return { field: t[0] ?? '', tokens: t.slice(1) };
+  }
+  const field = path.split(/[.[]/)[0];
+  const rest = path.slice(field.length).replace(/^\./, '');
+  return { field, tokens: rest === '' ? [] : tokenizePath(rest) };
+}
+
+function getAtTokens(root, tokens) {
   let cur = root;
-  for (const tok of tokenizePath(path)) {
+  for (const tok of tokens) {
     if (cur === null || typeof cur !== 'object') return undefined;
     cur = cur[tok];
   }
   return cur;
+}
+
+function getAtPath(root, path) {
+  if (path === '') return root;
+  return getAtTokens(root, tokenizePath(path));
+}
+
+/** SPEC §15.5 — the digest a redaction seal signs. */
+function redactionsHashOf(run) {
+  const log = run.steps
+    .filter((s) => s.redactions && s.redactions.length > 0)
+    .map((s) => ({ stepId: s.id, redactions: s.redactions }));
+  return sha256(`tgredact/2${NUL}${canonicalize(log)}`);
 }
 
 /* ================================================================== *
@@ -184,26 +282,40 @@ function getAtPath(root, path) {
 
 function verifyRun(run) {
   const problems = [];
+  const version = versionOf(run);
+  if (version !== 1 && version !== 2) return [`unsupported hashVersion ${version}`];
+
   let prev = '';
   for (const step of run.steps) {
-    const expected = hashStep(step, prev);
+    const expected = hashStep(step, prev, version);
     if (step.prevHash !== prev) problems.push(`step ${step.id}: prevHash linkage broken`);
     else if (step.hash !== expected) problems.push(`step ${step.id}: hash mismatch`);
     if (problems.length) break;
     prev = step.hash;
   }
-  if (!problems.length && run.runHash !== prev) problems.push('runHash != final step hash');
+  if (!problems.length && run.runHash !== runHashOf(run, prev)) {
+    problems.push(version === 2 ? 'runHash != run header hash' : 'runHash != final step hash');
+  }
 
   if (!problems.length) {
     for (const step of run.steps) {
       if (!step.commitments) continue;
       const salts = step.salts ?? {};
+      const declared = new Set((step.redactions ?? []).map((r) => r.path));
       for (const [path, commitment] of Object.entries(step.commitments)) {
         const salt = salts[path];
-        if (salt === undefined) continue; // redacted
-        const field = path.split(/[.[]/)[0];
-        const rest = path.slice(field.length).replace(/^\./, '');
-        if (commitmentFor(salt, getAtPath(step[field], rest)) !== commitment) {
+        const { field, tokens } = splitCommitmentPath(path, version);
+        const value = getAtTokens(step[field], tokens);
+        if (salt === undefined) {
+          // v1: a missing salt is accepted as a redaction, no questions asked.
+          // v2 (SPEC §15.6): the record must ADMIT the erasure — marker in place
+          // AND a matching entry in the step's redaction log.
+          if (version === 2 && !(declared.has(path) && value === REDACTED_MARKER)) {
+            problems.push(`step ${step.id}: undeclared erasure at ${path}`);
+          }
+          continue;
+        }
+        if (commitmentFor(salt, value) !== commitment) {
           problems.push(`step ${step.id}: commitment mismatch at ${path}`);
         }
       }
@@ -218,6 +330,23 @@ function verifyRun(run) {
     const der = createPublicKey(sig.publicKey).export({ type: 'spki', format: 'der' });
     const kid = createHash('sha256').update(der).digest('hex').slice(0, 16);
     if (kid !== sig.keyId) problems.push(`keyId ${sig.keyId} does not derive from the embedded public key (expected ${kid})`);
+  }
+
+  // SPEC §15.5 — the redaction seal, when one is present.
+  if (!problems.length && run.redactionSeal) {
+    const seal = run.redactionSeal;
+    const expected = redactionsHashOf(run);
+    if (seal.redactionsHash !== expected) problems.push('redaction seal: digest does not match the log');
+    else {
+      const payload = canonicalize({
+        runId: run.id,
+        runHash: run.runHash,
+        redactionsHash: expected,
+        sealedAt: seal.sealedAt,
+      });
+      const ok = edVerify(null, Buffer.from(payload, 'utf8'), createPublicKey(seal.publicKey), Buffer.from(seal.signature, 'base64'));
+      if (!ok) problems.push('redaction seal invalid');
+    }
   }
   return problems;
 }
@@ -274,6 +403,101 @@ for (const name of ['minimal', 'committed', 'redacted', 'signed']) {
 
 // The defining property of commitment-based redaction.
 check('08 redaction preserves the anchor', runFile('redacted').runHash, runFile('committed').runHash);
+
+/* ================================================================== *
+ * tgcanon/2 (SPEC §15)                                                *
+ * ================================================================== */
+
+const v2 = load('06-v2.json');
+
+for (const v of v2.walk) {
+  const leaves = [];
+  walkLeaves(JSON.parse(v.inputJson), (p, l) => leaves.push({ path: p, canonicalLeaf: canonicalize(l) }), v.field, 2);
+  check(`06 walk-v2/${v.name}`, JSON.stringify(leaves), JSON.stringify(v.leaves));
+}
+
+for (const [name, expectations] of Object.entries(v2.runs)) {
+  const run = runFile(name);
+  check(`06 declares hashVersion 2/${name}`, run.hashVersion, 2);
+  expectations.forEach((exp, i) => {
+    const step = run.steps[i];
+    check(`06 canonicalStep-v2/${name}#${i}`, canonicalStep(step, 2), exp.canonicalStep);
+    check(
+      `06 preimage-v2/${name}#${i}`,
+      JSON.stringify(`tgstep/2${NUL}${canonicalStep(step, 2)}${NUL}${exp.prevHash}`),
+      exp.hashPreimageEscaped,
+    );
+    check(`06 hash-v2/${name}#${i}`, hashStep(step, exp.prevHash, 2), exp.hash);
+  });
+}
+
+// The run header — the thing that puts currency/status/totals inside the anchor.
+check('06 runHash-v2', sha256(`tgrun/2${NUL}${canonicalize(v2.runHash.header)}`), v2.runHash.runHash);
+check('06 runHash-v2 matches the record', runFile('v2-signed').runHash, v2.runHash.runHash);
+
+check(
+  '06 signaturePayload-v2',
+  canonicalize({ runId: 'vec-v2', runHash: v2.runHash.runHash, signedAt: v2.signature.signedAt }),
+  v2.signature.signaturePayload,
+);
+
+// The redaction seal.
+const sealedRun = runFile('v2-redacted-sealed');
+check('06 redactionsHash', redactionsHashOf(sealedRun), v2.redactionSeal.redactionsHash);
+check(
+  '06 redactionSeal payload',
+  canonicalize({
+    runId: sealedRun.id,
+    runHash: sealedRun.runHash,
+    redactionsHash: v2.redactionSeal.redactionsHash,
+    sealedAt: v2.redactionSeal.sealedAt,
+  }),
+  v2.redactionSeal.sealPayload,
+);
+
+for (const name of ['v2-signed', 'v2-redacted-sealed']) {
+  check(`06 verify/${name}`, verifyRun(runFile(name)).join('; '), '');
+}
+
+// v2's headline property: the anchor still survives a redaction.
+check('06 redaction preserves the anchor', sealedRun.runHash, runFile('v2-signed').runHash);
+
+// ...and the redacted leaf is the dotted key that v1 could not even address.
+check(
+  '06 the redacted path is escaped',
+  Object.keys(runFile('v2-signed').steps[0].commitments).includes(v2.redactionSeal.redactedPath),
+  true,
+);
+
+// v2 refuses an erasure the record does not admit to (SPEC §15.6).
+{
+  const tampered = structuredClone(sealedRun);
+  tampered.steps[0].redactions = [];
+  check(
+    '06 undeclared erasure is rejected',
+    verifyRun(tampered).some((p) => p.includes('undeclared erasure')),
+    true,
+  );
+}
+
+/* ================================================================== *
+ * The compatibility invariant                                         *
+ * ================================================================== */
+
+// Two records produced by the LAST build before tgcanon/2 existed, committed
+// unmodified. They declare no hashVersion, so a conforming verifier must read
+// them as version 1 and they must still verify — that is the whole promise.
+for (const name of ['legacy-signed', 'legacy-redacted']) {
+  const run = runFile(name);
+  check(`10 legacy/${name} declares no version`, run.hashVersion, undefined);
+  check(`10 legacy/${name} verifies`, verifyRun(run).join('; '), '');
+  check(`10 legacy/${name} anchors on the final step hash`, run.runHash, run.steps[run.steps.length - 1].hash);
+}
+check(
+  '10 legacy redaction preserved the anchor',
+  runFile('legacy-redacted').runHash,
+  runFile('legacy-signed').runHash,
+);
 
 console.log(`${pass} checks passed, ${fail.length} failed`);
 if (fail.length) {

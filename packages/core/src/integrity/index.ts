@@ -1,4 +1,18 @@
-export { canonicalize, canonicalStep, hashStep, chainSteps, applyHashChain } from './hash.js';
+export {
+  canonicalize,
+  canonicalStep,
+  hashStep,
+  chainSteps,
+  chainAnchor,
+  applyHashChain,
+  computeRunHash,
+  hashVersionOf,
+  isSupportedHashVersion,
+  DEFAULT_HASH_VERSION,
+  SUPPORTED_HASH_VERSIONS,
+  type HashVersion,
+  type HashChainOptions,
+} from './hash.js';
 export { verifyRun, type VerifyResult } from './verify.js';
 export {
   signaturePayload,
@@ -6,6 +20,12 @@ export {
   signRun,
   verifySignature,
   verifyRunFull,
+  redactionLog,
+  redactionsHash,
+  redactionSealPayload,
+  sealRedactions,
+  verifyRedactionSeal,
   type SignatureVerifyResult,
+  type RedactionVerifyResult,
   type FullVerifyResult,
 } from './signing.js';

@@ -1,0 +1,113 @@
+{
+  "formatVersion": 1,
+  "exportedAt": "2026-07-25T09:00:00.000Z",
+  "run": {
+    "id": "vec-v2",
+    "name": "v2 run",
+    "startedAt": "2026-07-25T09:00:00.000Z",
+    "endedAt": "2026-07-25T09:00:10.000Z",
+    "status": "completed",
+    "currency": "INR",
+    "totals": {
+      "tokens": 1320,
+      "cost": 4.700025,
+      "durationMs": 5120,
+      "steps": 2
+    },
+    "warnings": [],
+    "steps": [
+      {
+        "id": "vec-v2:0",
+        "runId": "vec-v2",
+        "index": 0,
+        "type": "tool_call",
+        "label": "Tool: db_query",
+        "startedAt": "2026-07-25T09:00:00.000Z",
+        "durationMs": 120,
+        "tokens": 40,
+        "cost": 0.000025,
+        "toolName": "db_query",
+        "input": {
+          "user.email": "[traceglass:redacted]",
+          "rows[0]": "not an array",
+          "a\\b": 1,
+          "": "empty key",
+          "user": {
+            "email": "nested, and a DIFFERENT leaf from user.email above"
+          },
+          "rows": [
+            {
+              "id": 1
+            }
+          ]
+        },
+        "output": {
+          "ok": true
+        },
+        "spanId": "00000000000000c1",
+        "commitments": {
+          "input.user\\.email": "59a998d67c99d2e05168c3d74e89885a6a3e3f4bfc99da87934e15d09f64ffa7",
+          "input.rows\\[0]": "36ad187f34a17b9ae2aefe95111ab6cb75a475940c2c706f97fd6e981f2fde3a",
+          "input.a\\\\b": "ff5d46d2953263abe48a43dd205add637bb481faaf08d4d9659b3bf9fc39685f",
+          "input.": "52710a19d2c67281ab2687daf74db0f1c4f8317b0d30bb5878866638c9883a41",
+          "input.user.email": "96cb94e1539b8f124a1aff42219b5d44c08a6ccd67b727a9211377665a0f2689",
+          "input.rows[0].id": "bdf646189ec7e6db07133017f67cb8f759701d66e8c93a9dcda8e8db843feceb",
+          "output.ok": "6f11b607f1d6e2088e88c1eb44f1ea493c87561984184dc85fae519812194c10"
+        },
+        "salts": {
+          "input.rows\\[0]": "0951956b7a150c2c68cb836dc82c5102",
+          "input.a\\\\b": "88c4adb9b6ff780ce714004faecee9b5",
+          "input.": "7f321b173426d3a6e48c8492e0092f51",
+          "input.user.email": "0ada915d95d689496247aa24c8144140",
+          "input.rows[0].id": "1dc460866bada377c0ff347b594e33b8",
+          "output.ok": "8863d00a19c82fc35c5e7dcf5f8018e3"
+        },
+        "prevHash": "",
+        "hash": "fb9e1082f7b69157216e22b7bf1ab60fe989492559d2d61dd0938efc2d453dc1",
+        "redactions": [
+          {
+            "path": "input.user\\.email",
+            "at": "2026-07-25T10:00:00.000Z",
+            "reason": "gdpr-erasure",
+            "by": "manual"
+          }
+        ]
+      },
+      {
+        "id": "vec-v2:1",
+        "runId": "vec-v2",
+        "index": 1,
+        "type": "final_output",
+        "label": "Answer",
+        "startedAt": "2026-07-25T09:00:05.000Z",
+        "durationMs": 5000,
+        "tokens": 1280,
+        "cost": 4.7,
+        "output": {
+          "text": "Q3 spend was 4.7 lakh."
+        },
+        "spanId": "00000000000000c2",
+        "parentSpanId": "00000000000000c1",
+        "prevHash": "fb9e1082f7b69157216e22b7bf1ab60fe989492559d2d61dd0938efc2d453dc1",
+        "hash": "4e80f3b76fa57293c358079c7bc5a1a8103893cfe1d9c54a8b4dd6bf9e1c4ee3"
+      }
+    ],
+    "runHash": "6aeaceb9897377e4ada7b05cdb9e96ae6a94936cd107fdd8c9e1aa8e25f106bd",
+    "hashVersion": 2,
+    "signature": {
+      "algorithm": "ed25519",
+      "keyId": "29e0d3e8fb7ac052",
+      "publicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAtU4wnsl41oQtdJgQxyhbv3pHMawDnj8pMDRSu0jobWU=\n-----END PUBLIC KEY-----\n",
+      "signature": "myt543FkwMYksNFQoUcwLofMETFBWWD+8Ijsgk+raKSRpnf85Jbzx8Vq4aYw054K4usKkv1WaaGIiuHdbztRCw==",
+      "signedAt": "2026-07-25T09:00:11.000Z"
+    },
+    "redactionSeal": {
+      "algorithm": "ed25519",
+      "keyId": "29e0d3e8fb7ac052",
+      "publicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAtU4wnsl41oQtdJgQxyhbv3pHMawDnj8pMDRSu0jobWU=\n-----END PUBLIC KEY-----\n",
+      "signature": "0EbHHt1Ao5KsS6uxNkW/abFPZVdtIa3TjiVC7wRNAXbOF/elxz4lX+UZ+JUZtGhkySw4A7oSNTiTKJN6ngV0CA==",
+      "sealedAt": "2026-07-25T10:00:01.000Z",
+      "redactionsHash": "1f6f99c96083e07f7e3db7b1aa8f45a4076d8aa20b79689d324f1554ae036e87"
+    }
+  }
+}

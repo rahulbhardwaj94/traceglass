@@ -1,0 +1,276 @@
+{
+  "about": "tgcanon/2 vectors. ADDITIVE: the version-1 files are unchanged and still normative for records that declare no hashVersion. See SPEC.md §15.",
+  "hashVersion": 2,
+  "walk": [
+    {
+      "name": "scalar",
+      "note": "",
+      "field": "input",
+      "inputJson": "\"hello\"",
+      "leaves": [
+        {
+          "path": "input",
+          "canonicalLeaf": "\"hello\""
+        }
+      ]
+    },
+    {
+      "name": "null",
+      "note": "",
+      "field": "input",
+      "inputJson": "null",
+      "leaves": [
+        {
+          "path": "input",
+          "canonicalLeaf": "null"
+        }
+      ]
+    },
+    {
+      "name": "nested-object",
+      "note": "",
+      "field": "input",
+      "inputJson": "{\"a\":{\"b\":1}}",
+      "leaves": [
+        {
+          "path": "input.a.b",
+          "canonicalLeaf": "1"
+        }
+      ]
+    },
+    {
+      "name": "array",
+      "note": "",
+      "field": "input",
+      "inputJson": "[\"x\",\"y\"]",
+      "leaves": [
+        {
+          "path": "input[0]",
+          "canonicalLeaf": "\"x\""
+        },
+        {
+          "path": "input[1]",
+          "canonicalLeaf": "\"y\""
+        }
+      ]
+    },
+    {
+      "name": "array-of-arrays",
+      "note": "",
+      "field": "input",
+      "inputJson": "[[1,2],[3]]",
+      "leaves": [
+        {
+          "path": "input[0][0]",
+          "canonicalLeaf": "1"
+        },
+        {
+          "path": "input[0][1]",
+          "canonicalLeaf": "2"
+        },
+        {
+          "path": "input[1][0]",
+          "canonicalLeaf": "3"
+        }
+      ]
+    },
+    {
+      "name": "object-numeric-keys",
+      "note": "",
+      "field": "input",
+      "inputJson": "{\"0\":\"x\",\"1\":\"y\"}",
+      "leaves": [
+        {
+          "path": "input.0",
+          "canonicalLeaf": "\"x\""
+        },
+        {
+          "path": "input.1",
+          "canonicalLeaf": "\"y\""
+        }
+      ]
+    },
+    {
+      "name": "empty-object-is-a-leaf",
+      "note": "",
+      "field": "input",
+      "inputJson": "{}",
+      "leaves": [
+        {
+          "path": "input",
+          "canonicalLeaf": "{}"
+        }
+      ]
+    },
+    {
+      "name": "empty-array-is-a-leaf",
+      "note": "",
+      "field": "input",
+      "inputJson": "[]",
+      "leaves": [
+        {
+          "path": "input",
+          "canonicalLeaf": "[]"
+        }
+      ]
+    },
+    {
+      "name": "nested-empties-are-leaves",
+      "note": "",
+      "field": "input",
+      "inputJson": "{\"a\":{},\"b\":[]}",
+      "leaves": [
+        {
+          "path": "input.a",
+          "canonicalLeaf": "{}"
+        },
+        {
+          "path": "input.b",
+          "canonicalLeaf": "[]"
+        }
+      ]
+    },
+    {
+      "name": "mixed",
+      "note": "",
+      "field": "output",
+      "inputJson": "{\"rows\":[{\"id\":1},{\"id\":2}],\"ok\":true}",
+      "leaves": [
+        {
+          "path": "output.rows[0].id",
+          "canonicalLeaf": "1"
+        },
+        {
+          "path": "output.rows[1].id",
+          "canonicalLeaf": "2"
+        },
+        {
+          "path": "output.ok",
+          "canonicalLeaf": "true"
+        }
+      ]
+    },
+    {
+      "name": "AMBIGUOUS-dotted-key",
+      "note": "Produces the SAME path \"input.a.b\" as {\"a\":{\"b\":1}}. See SPEC.md §9.3 — this is a known defect: such a leaf CANNOT be re-verified.",
+      "field": "input",
+      "inputJson": "{\"a.b\":1}",
+      "leaves": [
+        {
+          "path": "input.a\\.b",
+          "canonicalLeaf": "1"
+        }
+      ]
+    },
+    {
+      "name": "AMBIGUOUS-empty-key",
+      "note": "Produces path \"input.\" which does not resolve on read-back. Known defect.",
+      "field": "input",
+      "inputJson": "{\"\":1}",
+      "leaves": [
+        {
+          "path": "input.",
+          "canonicalLeaf": "1"
+        }
+      ]
+    },
+    {
+      "name": "AMBIGUOUS-bracket-key",
+      "note": "Produces path \"input.a[0]\", indistinguishable from {\"a\":[1]}. Known defect.",
+      "field": "input",
+      "inputJson": "{\"a[0]\":1}",
+      "leaves": [
+        {
+          "path": "input.a\\[0]",
+          "canonicalLeaf": "1"
+        }
+      ]
+    }
+  ],
+  "runs": {
+    "v2-signed": [
+      {
+        "id": "vec-v2:0",
+        "index": 0,
+        "prevHash": "",
+        "canonicalStep": "{\"cost\":0.000025,\"durationMs\":120,\"id\":\"vec-v2:0\",\"index\":0,\"input\":{\"input.\":\"52710a19d2c67281ab2687daf74db0f1c4f8317b0d30bb5878866638c9883a41\",\"input.a\\\\\\\\b\":\"ff5d46d2953263abe48a43dd205add637bb481faaf08d4d9659b3bf9fc39685f\",\"input.rows[0].id\":\"bdf646189ec7e6db07133017f67cb8f759701d66e8c93a9dcda8e8db843feceb\",\"input.rows\\\\[0]\":\"36ad187f34a17b9ae2aefe95111ab6cb75a475940c2c706f97fd6e981f2fde3a\",\"input.user.email\":\"96cb94e1539b8f124a1aff42219b5d44c08a6ccd67b727a9211377665a0f2689\",\"input.user\\\\.email\":\"59a998d67c99d2e05168c3d74e89885a6a3e3f4bfc99da87934e15d09f64ffa7\"},\"label\":\"Tool: db_query\",\"output\":{\"output.ok\":\"6f11b607f1d6e2088e88c1eb44f1ea493c87561984184dc85fae519812194c10\"},\"runId\":\"vec-v2\",\"spanId\":\"00000000000000c1\",\"startedAt\":\"2026-07-25T09:00:00.000Z\",\"tokens\":40,\"toolName\":\"db_query\",\"type\":\"tool_call\"}",
+        "hashPreimageEscaped": "\"tgstep/2\\u0000{\\\"cost\\\":0.000025,\\\"durationMs\\\":120,\\\"id\\\":\\\"vec-v2:0\\\",\\\"index\\\":0,\\\"input\\\":{\\\"input.\\\":\\\"52710a19d2c67281ab2687daf74db0f1c4f8317b0d30bb5878866638c9883a41\\\",\\\"input.a\\\\\\\\\\\\\\\\b\\\":\\\"ff5d46d2953263abe48a43dd205add637bb481faaf08d4d9659b3bf9fc39685f\\\",\\\"input.rows[0].id\\\":\\\"bdf646189ec7e6db07133017f67cb8f759701d66e8c93a9dcda8e8db843feceb\\\",\\\"input.rows\\\\\\\\[0]\\\":\\\"36ad187f34a17b9ae2aefe95111ab6cb75a475940c2c706f97fd6e981f2fde3a\\\",\\\"input.user.email\\\":\\\"96cb94e1539b8f124a1aff42219b5d44c08a6ccd67b727a9211377665a0f2689\\\",\\\"input.user\\\\\\\\.email\\\":\\\"59a998d67c99d2e05168c3d74e89885a6a3e3f4bfc99da87934e15d09f64ffa7\\\"},\\\"label\\\":\\\"Tool: db_query\\\",\\\"output\\\":{\\\"output.ok\\\":\\\"6f11b607f1d6e2088e88c1eb44f1ea493c87561984184dc85fae519812194c10\\\"},\\\"runId\\\":\\\"vec-v2\\\",\\\"spanId\\\":\\\"00000000000000c1\\\",\\\"startedAt\\\":\\\"2026-07-25T09:00:00.000Z\\\",\\\"tokens\\\":40,\\\"toolName\\\":\\\"db_query\\\",\\\"type\\\":\\\"tool_call\\\"}\\u0000\"",
+        "hash": "fb9e1082f7b69157216e22b7bf1ab60fe989492559d2d61dd0938efc2d453dc1"
+      },
+      {
+        "id": "vec-v2:1",
+        "index": 1,
+        "prevHash": "fb9e1082f7b69157216e22b7bf1ab60fe989492559d2d61dd0938efc2d453dc1",
+        "canonicalStep": "{\"cost\":4.7,\"durationMs\":5000,\"id\":\"vec-v2:1\",\"index\":1,\"label\":\"Answer\",\"output\":{\"text\":\"Q3 spend was 4.7 lakh.\"},\"parentSpanId\":\"00000000000000c1\",\"runId\":\"vec-v2\",\"spanId\":\"00000000000000c2\",\"startedAt\":\"2026-07-25T09:00:05.000Z\",\"tokens\":1280,\"type\":\"final_output\"}",
+        "hashPreimageEscaped": "\"tgstep/2\\u0000{\\\"cost\\\":4.7,\\\"durationMs\\\":5000,\\\"id\\\":\\\"vec-v2:1\\\",\\\"index\\\":1,\\\"label\\\":\\\"Answer\\\",\\\"output\\\":{\\\"text\\\":\\\"Q3 spend was 4.7 lakh.\\\"},\\\"parentSpanId\\\":\\\"00000000000000c1\\\",\\\"runId\\\":\\\"vec-v2\\\",\\\"spanId\\\":\\\"00000000000000c2\\\",\\\"startedAt\\\":\\\"2026-07-25T09:00:05.000Z\\\",\\\"tokens\\\":1280,\\\"type\\\":\\\"final_output\\\"}\\u0000fb9e1082f7b69157216e22b7bf1ab60fe989492559d2d61dd0938efc2d453dc1\"",
+        "hash": "4e80f3b76fa57293c358079c7bc5a1a8103893cfe1d9c54a8b4dd6bf9e1c4ee3"
+      }
+    ],
+    "v2-redacted-sealed": [
+      {
+        "id": "vec-v2:0",
+        "index": 0,
+        "prevHash": "",
+        "canonicalStep": "{\"cost\":0.000025,\"durationMs\":120,\"id\":\"vec-v2:0\",\"index\":0,\"input\":{\"input.\":\"52710a19d2c67281ab2687daf74db0f1c4f8317b0d30bb5878866638c9883a41\",\"input.a\\\\\\\\b\":\"ff5d46d2953263abe48a43dd205add637bb481faaf08d4d9659b3bf9fc39685f\",\"input.rows[0].id\":\"bdf646189ec7e6db07133017f67cb8f759701d66e8c93a9dcda8e8db843feceb\",\"input.rows\\\\[0]\":\"36ad187f34a17b9ae2aefe95111ab6cb75a475940c2c706f97fd6e981f2fde3a\",\"input.user.email\":\"96cb94e1539b8f124a1aff42219b5d44c08a6ccd67b727a9211377665a0f2689\",\"input.user\\\\.email\":\"59a998d67c99d2e05168c3d74e89885a6a3e3f4bfc99da87934e15d09f64ffa7\"},\"label\":\"Tool: db_query\",\"output\":{\"output.ok\":\"6f11b607f1d6e2088e88c1eb44f1ea493c87561984184dc85fae519812194c10\"},\"runId\":\"vec-v2\",\"spanId\":\"00000000000000c1\",\"startedAt\":\"2026-07-25T09:00:00.000Z\",\"tokens\":40,\"toolName\":\"db_query\",\"type\":\"tool_call\"}",
+        "hashPreimageEscaped": "\"tgstep/2\\u0000{\\\"cost\\\":0.000025,\\\"durationMs\\\":120,\\\"id\\\":\\\"vec-v2:0\\\",\\\"index\\\":0,\\\"input\\\":{\\\"input.\\\":\\\"52710a19d2c67281ab2687daf74db0f1c4f8317b0d30bb5878866638c9883a41\\\",\\\"input.a\\\\\\\\\\\\\\\\b\\\":\\\"ff5d46d2953263abe48a43dd205add637bb481faaf08d4d9659b3bf9fc39685f\\\",\\\"input.rows[0].id\\\":\\\"bdf646189ec7e6db07133017f67cb8f759701d66e8c93a9dcda8e8db843feceb\\\",\\\"input.rows\\\\\\\\[0]\\\":\\\"36ad187f34a17b9ae2aefe95111ab6cb75a475940c2c706f97fd6e981f2fde3a\\\",\\\"input.user.email\\\":\\\"96cb94e1539b8f124a1aff42219b5d44c08a6ccd67b727a9211377665a0f2689\\\",\\\"input.user\\\\\\\\.email\\\":\\\"59a998d67c99d2e05168c3d74e89885a6a3e3f4bfc99da87934e15d09f64ffa7\\\"},\\\"label\\\":\\\"Tool: db_query\\\",\\\"output\\\":{\\\"output.ok\\\":\\\"6f11b607f1d6e2088e88c1eb44f1ea493c87561984184dc85fae519812194c10\\\"},\\\"runId\\\":\\\"vec-v2\\\",\\\"spanId\\\":\\\"00000000000000c1\\\",\\\"startedAt\\\":\\\"2026-07-25T09:00:00.000Z\\\",\\\"tokens\\\":40,\\\"toolName\\\":\\\"db_query\\\",\\\"type\\\":\\\"tool_call\\\"}\\u0000\"",
+        "hash": "fb9e1082f7b69157216e22b7bf1ab60fe989492559d2d61dd0938efc2d453dc1"
+      },
+      {
+        "id": "vec-v2:1",
+        "index": 1,
+        "prevHash": "fb9e1082f7b69157216e22b7bf1ab60fe989492559d2d61dd0938efc2d453dc1",
+        "canonicalStep": "{\"cost\":4.7,\"durationMs\":5000,\"id\":\"vec-v2:1\",\"index\":1,\"label\":\"Answer\",\"output\":{\"text\":\"Q3 spend was 4.7 lakh.\"},\"parentSpanId\":\"00000000000000c1\",\"runId\":\"vec-v2\",\"spanId\":\"00000000000000c2\",\"startedAt\":\"2026-07-25T09:00:05.000Z\",\"tokens\":1280,\"type\":\"final_output\"}",
+        "hashPreimageEscaped": "\"tgstep/2\\u0000{\\\"cost\\\":4.7,\\\"durationMs\\\":5000,\\\"id\\\":\\\"vec-v2:1\\\",\\\"index\\\":1,\\\"label\\\":\\\"Answer\\\",\\\"output\\\":{\\\"text\\\":\\\"Q3 spend was 4.7 lakh.\\\"},\\\"parentSpanId\\\":\\\"00000000000000c1\\\",\\\"runId\\\":\\\"vec-v2\\\",\\\"spanId\\\":\\\"00000000000000c2\\\",\\\"startedAt\\\":\\\"2026-07-25T09:00:05.000Z\\\",\\\"tokens\\\":1280,\\\"type\\\":\\\"final_output\\\"}\\u0000fb9e1082f7b69157216e22b7bf1ab60fe989492559d2d61dd0938efc2d453dc1\"",
+        "hash": "4e80f3b76fa57293c358079c7bc5a1a8103893cfe1d9c54a8b4dd6bf9e1c4ee3"
+      }
+    ]
+  },
+  "runHash": {
+    "about": "runHash = sha256_hex(\"tgrun/2\" || NUL || canonical(header)). The header is the object below verbatim; `chainAnchor` is the final step hash.",
+    "header": {
+      "hashVersion": 2,
+      "id": "vec-v2",
+      "name": "v2 run",
+      "startedAt": "2026-07-25T09:00:00.000Z",
+      "endedAt": "2026-07-25T09:00:10.000Z",
+      "status": "completed",
+      "currency": "INR",
+      "totals": {
+        "tokens": 1320,
+        "cost": 4.700025,
+        "durationMs": 5120,
+        "steps": 2
+      },
+      "stepCount": 2,
+      "chainAnchor": "4e80f3b76fa57293c358079c7bc5a1a8103893cfe1d9c54a8b4dd6bf9e1c4ee3"
+    },
+    "runHash": "6aeaceb9897377e4ada7b05cdb9e96ae6a94936cd107fdd8c9e1aa8e25f106bd"
+  },
+  "signature": {
+    "keyId": "29e0d3e8fb7ac052",
+    "signedAt": "2026-07-25T09:00:11.000Z",
+    "signaturePayload": "{\"runHash\":\"6aeaceb9897377e4ada7b05cdb9e96ae6a94936cd107fdd8c9e1aa8e25f106bd\",\"runId\":\"vec-v2\",\"signedAt\":\"2026-07-25T09:00:11.000Z\"}",
+    "signatureBase64": "myt543FkwMYksNFQoUcwLofMETFBWWD+8Ijsgk+raKSRpnf85Jbzx8Vq4aYw054K4usKkv1WaaGIiuHdbztRCw=="
+  },
+  "redactionSeal": {
+    "about": "redactionsHash = sha256_hex(\"tgredact/2\" || NUL || canonical(log)), where `log` is the array below: one entry per step that has redactions, in step order. The seal signs canonical({runId, runHash, redactionsHash, sealedAt}).",
+    "log": [
+      {
+        "stepId": "vec-v2:0",
+        "redactions": [
+          {
+            "path": "input.user\\.email",
+            "at": "2026-07-25T10:00:00.000Z",
+            "reason": "gdpr-erasure",
+            "by": "manual"
+          }
+        ]
+      }
+    ],
+    "redactionsHash": "1f6f99c96083e07f7e3db7b1aa8f45a4076d8aa20b79689d324f1554ae036e87",
+    "sealedAt": "2026-07-25T10:00:01.000Z",
+    "sealPayload": "{\"redactionsHash\":\"1f6f99c96083e07f7e3db7b1aa8f45a4076d8aa20b79689d324f1554ae036e87\",\"runHash\":\"6aeaceb9897377e4ada7b05cdb9e96ae6a94936cd107fdd8c9e1aa8e25f106bd\",\"runId\":\"vec-v2\",\"sealedAt\":\"2026-07-25T10:00:01.000Z\"}",
+    "signatureBase64": "0EbHHt1Ao5KsS6uxNkW/abFPZVdtIa3TjiVC7wRNAXbOF/elxz4lX+UZ+JUZtGhkySw4A7oSNTiTKJN6ngV0CA==",
+    "redactedPath": "input.user\\.email"
+  }
+}

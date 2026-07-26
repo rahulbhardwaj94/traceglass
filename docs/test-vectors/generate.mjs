@@ -21,11 +21,27 @@ import { fileURLToPath } from 'node:url';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CORE = join(HERE, '..', '..', 'packages', 'core', 'dist');
 
-const { canonicalize, canonicalStep, hashStep } = await import(join(CORE, 'integrity/hash.js'));
-const { commitmentFor, walkLeaves } = await import(join(CORE, 'redact/commit.js'));
-const { signaturePayload, keyIdFromPublicKey, signRun } = await import(
-  join(CORE, 'integrity/signing.js')
+const { canonicalize, canonicalStep, hashStep, computeRunHash } = await import(
+  join(CORE, 'integrity/hash.js')
 );
+const { commitmentFor, walkLeaves } = await import(join(CORE, 'redact/commit.js'));
+const { signaturePayload, keyIdFromPublicKey, signRun, redactionsHash, redactionSealPayload } =
+  await import(join(CORE, 'integrity/signing.js'));
+
+/**
+ * EVERY call into core below passes its hash version EXPLICITLY.
+ *
+ * The version-1 corpus is frozen: those files are the format as published in
+ * 0.3.0–0.8.0 and re-running this script must reproduce them byte-for-byte. If
+ * these calls relied on the library defaults, a future default change would
+ * silently rewrite the frozen vectors — which is exactly the failure this whole
+ * versioning exercise exists to prevent.
+ */
+const V1 = 1;
+const V2 = 2;
+
+/** The v2 preimage separator, U+0000. Written this way so no source file carries a raw NUL. */
+const NUL = String.fromCharCode(0);
 
 const sha256hex = (s) => createHash('sha256').update(s, 'utf8').digest('hex');
 const write = (rel, obj) => {
@@ -214,11 +230,18 @@ const walkCases = [
   ],
 ];
 
-const walkVectors = walkCases.map(([name, field, inputJson, note]) => {
-  const leaves = [];
-  walkLeaves(JSON.parse(inputJson), (path, leaf) => leaves.push({ path, canonicalLeaf: canonicalize(leaf) }), field);
-  return { name, note: note ?? '', field, inputJson, leaves };
-});
+const walkVectorsFor = (version) =>
+  walkCases.map(([name, field, inputJson, note]) => {
+    const leaves = [];
+    walkLeaves(
+      JSON.parse(inputJson),
+      (path, leaf) => leaves.push({ path, canonicalLeaf: canonicalize(leaf) }),
+      field,
+      version,
+    );
+    return { name, note: note ?? '', field, inputJson, leaves };
+  });
+const walkVectors = walkVectorsFor(V1);
 
 // Fixed salts: 16 bytes of the byte value equal to the index, hex-encoded.
 const fixedSalt = (i) => Buffer.alloc(16, i).toString('hex');
@@ -262,7 +285,7 @@ write('02-commitments.json', {
 const T0 = '2026-07-25T09:00:00.000Z';
 
 /** Build commitments over a payload with deterministic salts. */
-function deterministicCommitments(payload, saltSeed) {
+function deterministicCommitments(payload, saltSeed, version) {
   const commitments = {};
   const salts = {};
   let n = 0;
@@ -279,16 +302,17 @@ function deterministicCommitments(payload, saltSeed) {
         commitments[path] = commitmentFor(salt, leaf);
       },
       field,
+      version,
     );
   }
   return { commitments, salts };
 }
 
-function chain(steps) {
+function chain(steps, version) {
   let prevHash = '';
   return steps.map((s) => {
     const withPrev = { ...s, prevHash, hash: '' };
-    const hash = hashStep(withPrev, prevHash);
+    const hash = hashStep(withPrev, prevHash, version);
     prevHash = hash;
     return { ...withPrev, hash };
   });
@@ -306,10 +330,9 @@ function totalsOf(steps) {
   );
 }
 
-function makeRun(id, name, rawSteps) {
-  const steps = chain(rawSteps);
-  const last = steps[steps.length - 1];
-  return {
+function makeRun(id, name, rawSteps, version = V1) {
+  const steps = chain(rawSteps, version);
+  const partial = {
     id,
     name,
     startedAt: T0,
@@ -319,8 +342,10 @@ function makeRun(id, name, rawSteps) {
     totals: totalsOf(steps),
     warnings: [],
     steps,
-    runHash: last.hash,
+    runHash: '',
+    ...(version === V1 ? {} : { hashVersion: version }),
   };
+  return { ...partial, runHash: computeRunHash(partial) };
 }
 
 const envelope = (run) => ({ formatVersion: 1, exportedAt: T0, run });
@@ -382,7 +407,7 @@ const committedSteps = [
     toolName: 'db_query',
     ...trickyPayload,
     spanId: '00000000000000b1',
-    ...deterministicCommitments(trickyPayload, 'vec-cm:0'),
+    ...deterministicCommitments(trickyPayload, 'vec-cm:0', V1),
   },
 ];
 const committedRun = makeRun('vec-cm', 'committed run', committedSteps);
@@ -428,8 +453,8 @@ const stepExpectations = (run) =>
     id: s.id,
     index: s.index,
     prevHash: s.prevHash,
-    canonicalStep: canonicalStep(s),
-    hashPreimage: canonicalStep(s) + s.prevHash,
+    canonicalStep: canonicalStep(s, V1),
+    hashPreimage: canonicalStep(s, V1) + s.prevHash,
     hash: s.hash,
   }));
 
@@ -457,7 +482,192 @@ write('05-signature.json', {
   signatureBase64: signedRun.signature.signature,
 });
 
+/* ------------------------------------------------------------------ */
+/* 06 — tgcanon/2                                                      */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The v2 corpus is ADDITIVE. Nothing above changes: the files an auditor
+ * already holds are version 1 and stay exactly as they are. What follows pins
+ * the three things v2 alters — escaped commitment paths, the domain-separated
+ * step preimage with `runId` in it, and the run-header anchor — plus the
+ * redaction seal that the version-2 erasure rules lean on.
+ */
+
+// Payload built specifically from the keys that BREAK version 1 (SPEC §12.5):
+// a literal dot, a literal bracket, a backslash, and the empty key.
+const v2NastyPayload = {
+  input: {
+    'user.email': 'alice@example.com',
+    'rows[0]': 'not an array',
+    'a\\b': 1,
+    '': 'empty key',
+    user: { email: 'nested, and a DIFFERENT leaf from user.email above' },
+    rows: [{ id: 1 }],
+  },
+  output: { ok: true },
+};
+
+const v2Steps = [
+  {
+    id: 'vec-v2:0',
+    runId: 'vec-v2',
+    index: 0,
+    type: 'tool_call',
+    label: 'Tool: db_query',
+    startedAt: T0,
+    durationMs: 120,
+    tokens: 40,
+    cost: 0.000025,
+    toolName: 'db_query',
+    ...v2NastyPayload,
+    spanId: '00000000000000c1',
+    ...deterministicCommitments(v2NastyPayload, 'vec-v2:0', V2),
+  },
+  {
+    id: 'vec-v2:1',
+    runId: 'vec-v2',
+    index: 1,
+    type: 'final_output',
+    label: 'Answer',
+    startedAt: '2026-07-25T09:00:05.000Z',
+    durationMs: 5000,
+    tokens: 1280,
+    cost: 4.7,
+    output: { text: 'Q3 spend was 4.7 lakh.' },
+    spanId: '00000000000000c2',
+    parentSpanId: '00000000000000c1',
+  },
+];
+const v2Run = makeRun('vec-v2', 'v2 run', v2Steps, V2);
+
+// --- v2 run, signed --------------------------------------------------------
+const V2_SIGNED_AT = '2026-07-25T09:00:11.000Z';
+const { sign, createPrivateKey } = await import('node:crypto');
+const v2SignedRun = {
+  ...v2Run,
+  signature: {
+    algorithm: 'ed25519',
+    keyId: keyIdFromPublicKey(publicKeyPem),
+    publicKey: publicKeyPem,
+    signature: sign(
+      null,
+      Buffer.from(signaturePayload(v2Run.id, v2Run.runHash, V2_SIGNED_AT), 'utf8'),
+      createPrivateKey(privateKeyPem),
+    ).toString('base64'),
+    signedAt: V2_SIGNED_AT,
+  },
+};
+
+// --- v2 run, one leaf redacted AND sealed ----------------------------------
+// The redacted path is the dotted key, escaped — the exact leaf version 1 could
+// neither verify nor address.
+const V2_REDACTED_PATH = 'input.user\\.email';
+const v2RedactedStep = structuredClone(v2SignedRun.steps[0]);
+v2RedactedStep.input['user.email'] = REDACTED_MARKER;
+delete v2RedactedStep.salts[V2_REDACTED_PATH];
+v2RedactedStep.redactions = [
+  { path: V2_REDACTED_PATH, at: '2026-07-25T10:00:00.000Z', reason: 'gdpr-erasure', by: 'manual' },
+];
+const v2RedactedRun = {
+  ...v2SignedRun,
+  steps: [v2RedactedStep, v2SignedRun.steps[1]],
+  // Anchor deliberately UNCHANGED — still the property under test in v2.
+  runHash: v2SignedRun.runHash,
+};
+
+const V2_SEALED_AT = '2026-07-25T10:00:01.000Z';
+const v2RedactionsHash = redactionsHash(v2RedactedRun);
+const v2SealedRun = {
+  ...v2RedactedRun,
+  redactionSeal: {
+    algorithm: 'ed25519',
+    keyId: keyIdFromPublicKey(publicKeyPem),
+    publicKey: publicKeyPem,
+    signature: sign(
+      null,
+      Buffer.from(
+        redactionSealPayload(v2RedactedRun.id, v2RedactedRun.runHash, v2RedactionsHash, V2_SEALED_AT),
+        'utf8',
+      ),
+      createPrivateKey(privateKeyPem),
+    ).toString('base64'),
+    sealedAt: V2_SEALED_AT,
+    redactionsHash: v2RedactionsHash,
+  },
+};
+
+write('04-runs/v2-signed.tgev.json', envelope(v2SignedRun));
+write('04-runs/v2-redacted-sealed.tgev.json', envelope(v2SealedRun));
+
+const v2StepExpectations = (run) =>
+  run.steps.map((s) => ({
+    id: s.id,
+    index: s.index,
+    prevHash: s.prevHash,
+    canonicalStep: canonicalStep(s, V2),
+    // NUL (U+0000) separates the tag, the canonical form and the prevHash.
+    // Shown escaped here; it is a single byte 0x00 on the wire.
+    hashPreimageEscaped: JSON.stringify(
+      `tgstep/2${NUL}${canonicalStep(s, V2)}${NUL}${s.prevHash}`,
+    ),
+    hash: s.hash,
+  }));
+
+write('06-v2.json', {
+  about:
+    'tgcanon/2 vectors. ADDITIVE: the version-1 files are unchanged and still normative for records that declare no hashVersion. See SPEC.md §15.',
+  hashVersion: 2,
+  walk: walkVectorsFor(V2),
+  runs: {
+    'v2-signed': v2StepExpectations(v2SignedRun),
+    'v2-redacted-sealed': v2StepExpectations(v2SealedRun),
+  },
+  runHash: {
+    about:
+      'runHash = sha256_hex("tgrun/2" || NUL || canonical(header)). The header is the object below verbatim; `chainAnchor` is the final step hash.',
+    header: {
+      hashVersion: 2,
+      id: v2Run.id,
+      name: v2Run.name,
+      startedAt: v2Run.startedAt,
+      endedAt: v2Run.endedAt,
+      status: v2Run.status,
+      currency: v2Run.currency,
+      totals: v2Run.totals,
+      stepCount: v2Run.steps.length,
+      chainAnchor: v2Run.steps[v2Run.steps.length - 1].hash,
+    },
+    runHash: v2Run.runHash,
+  },
+  signature: {
+    keyId: keyIdFromPublicKey(publicKeyPem),
+    signedAt: V2_SIGNED_AT,
+    signaturePayload: signaturePayload(v2Run.id, v2Run.runHash, V2_SIGNED_AT),
+    signatureBase64: v2SignedRun.signature.signature,
+  },
+  redactionSeal: {
+    about:
+      'redactionsHash = sha256_hex("tgredact/2" || NUL || canonical(log)), where `log` is the array below: one entry per step that has redactions, in step order. The seal signs canonical({runId, runHash, redactionsHash, sealedAt}).',
+    log: v2SealedRun.steps
+      .filter((s) => s.redactions && s.redactions.length > 0)
+      .map((s) => ({ stepId: s.id, redactions: s.redactions })),
+    redactionsHash: v2RedactionsHash,
+    sealedAt: V2_SEALED_AT,
+    sealPayload: redactionSealPayload(
+      v2RedactedRun.id,
+      v2RedactedRun.runHash,
+      v2RedactionsHash,
+      V2_SEALED_AT,
+    ),
+    signatureBase64: v2SealedRun.redactionSeal.signature,
+    redactedPath: V2_REDACTED_PATH,
+  },
+});
+
 console.log('\nanchors:');
 console.log('  minimal  ', minimalRun.runHash);
 console.log('  committed', committedRun.runHash);
 console.log('  redacted ', redactedRun.steps[0].hash, '(must equal committed)');
+console.log('  v2       ', v2Run.runHash);
+console.log('  v2 sealed', v2SealedRun.runHash, '(must equal v2)');

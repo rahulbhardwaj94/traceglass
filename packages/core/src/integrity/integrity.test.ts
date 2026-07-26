@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ingestNative } from '../ingest/index.js';
 import { finalizeRun } from '../pipeline.js';
-import { applyHashChain, canonicalize } from './hash.js';
+import { applyHashChain, canonicalize, computeRunHash } from './hash.js';
 import { verifyRun } from './verify.js';
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), '../../../../fixtures');
@@ -28,8 +28,19 @@ describe('hash chain', () => {
       expect(run.steps[i]!.prevHash).toBe(run.steps[i - 1]!.hash);
     }
   });
-  it('runHash anchors to the final step hash', () => {
-    expect(run.runHash).toBe(run.steps[run.steps.length - 1]!.hash);
+  it('a tgcanon/1 run anchors on the final step hash', () => {
+    const v1 = applyHashChain(ingestNative(load('sample-run-native.json')), { hashVersion: 1 });
+    expect(v1.hashVersion).toBeUndefined(); // version 1 is the ABSENCE of the field
+    expect(v1.runHash).toBe(v1.steps[v1.steps.length - 1]!.hash);
+  });
+  it('a tgcanon/2 run anchors on a header hash that covers the chain and the metadata', () => {
+    // The anchor is no longer the last step hash: it is a hash OVER the chain
+    // anchor plus the run header, which is what puts currency/status/totals
+    // inside the sealed material (SPEC §6.2 was the hole).
+    expect(run.hashVersion).toBe(2);
+    expect(run.runHash).not.toBe(run.steps[run.steps.length - 1]!.hash);
+    expect(run.runHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(computeRunHash(run)).toBe(run.runHash);
   });
   it('hashes are deterministic', () => {
     const again = applyHashChain(ingestNative(load('sample-run-native.json')));
