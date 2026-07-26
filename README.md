@@ -190,8 +190,148 @@ edit the store can also re-chain it. v0.3 closes that hole:
   verdict **fully offline** — no store, no keys, no network. `report` renders
   the HTML audit report from the same file.
 - **Anchoring** — `traceglass anchor --all` appends `{runId, runHash, signature}`
-  records to a JSONL file you push to WORM storage (e.g. S3 Object Lock); that
-  out-of-band copy is the trust root re-signing can't beat.
+  records to a JSONL file you push to WORM storage (e.g. S3 Object Lock). On its
+  own this is only as trustworthy as the machine that wrote it; see
+  [external trust roots](#external-trust-roots-rfc-3161-and-sigstorerekor) for
+  what turns it into evidence a third party can check.
+
+## External trust roots: RFC 3161 and Sigstore/Rekor
+
+### The problem this solves
+
+`traceglass verify` checks a run's Ed25519 signature against **the public key
+embedded in the evidence file itself**. That is a closed loop. An attacker who
+controls the machine can edit a step, re-chain, generate a fresh keypair, re-sign,
+embed the new public key — and the file verifies clean. Signing proves the record
+is *internally consistent and self-attested*. It does **not** prove *"this is the
+record the agent actually produced."*
+
+For a regulator only the second claim is worth anything. Closing the gap means
+binding the record to something **the operator cannot rewrite**.
+
+| | An unanchored record proves | An anchored record adds |
+|---|---|---|
+| **Signed only** | internally consistent; self-attested by key `X` | — |
+| **+ RFC 3161** | " | the record **existed by time T**, attested by a Time Stamping Authority. Post-hoc rewriting is defeated *even by someone holding your signing key*, because they cannot obtain a countersignature dated before the edit. |
+| **+ Rekor** | " | membership in an **append-only public log**. Rewriting *and deletion* become detectable by third parties — "this record was deleted" turns into "this record is missing from a sequence". |
+
+### Usage
+
+Anchoring is opt-in per command. **The default sink makes no network request,
+ever** — traceglass is local-first and this is a stated guarantee, enforced by a
+test that fails if the default path so much as calls `fetch`.
+
+```bash
+# Default: local file, zero egress. Unchanged from previous releases.
+traceglass anchor --all
+
+# RFC 3161 — countersign the anchor with a Time Stamping Authority.
+traceglass anchor --all --sink rfc3161 --tsa http://timestamp.digicert.com
+
+# ...and pin the authority, which is what makes it third-party proof:
+traceglass anchor --all --sink rfc3161 \
+  --tsa http://timestamp.digicert.com --tsa-cert digicert-tsa.pem
+
+# Sigstore/Rekor — append to a public transparency log. Permanent and public,
+# so the consent flag is mandatory.
+traceglass anchor --all --sink rekor \
+  --rekor https://rekor.sigstore.dev --i-understand-public-log
+
+# Check runs back against their anchors — offline.
+traceglass anchor --verify
+traceglass verify <runId> --anchors ~/.traceglass/anchors.jsonl --tsa-cert tsa.pem
+
+# For CI: fail unless a real external trust root backs the record.
+traceglass verify <runId> --anchors anchors.jsonl \
+  --tsa-cert tsa.pem --require-external
+```
+
+### What actually leaves your machine
+
+Only a **SHA-256 digest**, and only when you pass an explicit URL. Never
+payloads, step labels, tool names, costs, or run ids.
+
+The digest covers the *anchor statement* — a fixed line-based encoding of
+`{runId, runHash, keyId, signature}`. Because the statement binds the run id and
+signature, a timestamp token cannot be lifted from one record and presented for
+another; that is checked and tested.
+
+| Sink | Transmitted | Received back |
+|---|---|---|
+| `file` | *nothing* | — |
+| `rfc3161` | request DER: version, algorithm OID, the digest, a nonce (~70 bytes) | a timestamp token |
+| `rekor` | the digest, an Ed25519 signature over the statement, **and your Ed25519 public key** | log entry + inclusion proof |
+
+**Be aware of the residual disclosure.** Submitting a hash to a public log
+reveals *that a record exists* and *when* — and, via the public key, links every
+entry you make with that key. It reveals nothing about the run's contents, but
+existence-and-timing is itself metadata some users cannot leak. A Rekor entry is
+also **permanent**: the log is append-only and entries cannot be retracted. That
+is why `--sink rekor` refuses to run without `--i-understand-public-log`. If
+that trade is wrong for you, RFC 3161 discloses strictly less (only the TSA sees
+the digest) and still gives you the "existed by time T" property.
+
+### Verification, and exactly how far it goes
+
+Anchors are worthless if nothing ever reads them back. `verify --anchors` and
+`anchor --verify` re-derive the anchor statement from the stored run and check
+every proof against it, reporting one of four strengths:
+
+- **`none`** — no anchor record exists. Reported, never passed over silently.
+- **`local`** — a matching, chained, self-signed record, but no external proof.
+- **`self-attested`** — the proof is cryptographically valid, but only against
+  trust material carried *inside the proof itself*.
+- **`external`** — the proof verifies against material you supplied out of band
+  (`--tsa-cert` / `--rekor-key`). **Only this is third-party evidence.**
+
+The `self-attested` / `external` distinction is deliberate and load-bearing.
+Verifying a TSA token against the certificate embedded in that same token is the
+identical closed loop as verifying a run against its own embedded key — so it is
+never reported as proof. Likewise a Rekor inclusion proof without the log's
+public key is self-referential (an attacker who fabricates the entry fabricates a
+matching root), so `--rekor-key` is what upgrades it.
+
+**What is not implemented:** X.509 path building to a trusted root. Node exposes
+no chain verifier, and a half-built one would be worse than an honest gap. Pin
+the TSA certificate instead. Full certificate-chain validation and key
+rotation/revocation remain open (see `ROADMAP.md`).
+
+The anchors file itself is now chained — each record stores the SHA-256 of the
+preceding line — and each record is Ed25519-signed. Deleting, reordering, or
+hand-writing a line is detected. This does not stop an attacker who has stolen
+your signing key; nothing local can. It stops one who only has file write
+access, which previously was enough to forge a clean anchor.
+
+### Dependencies
+
+**Zero new dependencies.** The production dependency count is unchanged at four.
+
+RFC 3161 needs ASN.1/DER, and the npm options (`pkijs`+`asn1js`, `node-forge`)
+each add several thousand lines and a transitive tree to a product whose pitch is
+that you can audit its supply chain. What RFC 3161 actually requires is a
+five-field request and a walk through CMS `SignedData` — a few hundred bytes of
+structure — so `src/asn1.ts` implements exactly that slice and nothing more.
+X.509 parsing uses Node's built-in `X509Certificate`; all crypto is Node's
+`node:crypto`. `npm audit --omit=dev` stays at 0 vulnerabilities.
+
+### How this is tested
+
+Every anchoring test runs **offline**, with no network and no skip-if-unavailable
+path. Beyond synthetic cases, the suite runs against real-world artefacts
+captured from production services and committed to `packages/cli/test-fixtures`:
+
+- **Genuine RFC 3161 tokens** from DigiCert's and Sectigo's public TSAs, plus
+  OpenSSL's own TSA implementation — covering multi-certificate chains and
+  differing signature-algorithm encodings that our own encoder cannot produce.
+- **A real Sigstore log entry**, verified by recomputing the public log's
+  published Merkle root from its 31-node inclusion path in a tree of ~2.1 billion
+  entries, and by checking its Signed Entry Timestamp against Rekor's real
+  public key.
+- The Merkle implementation is additionally cross-checked against a second,
+  independent implementation transcribed from the recursive definitions in
+  RFC 9162, so agreement is evidence rather than tautology.
+- Every single-bit flip across a token's signed regions is required to be
+  detected — exhaustively, not sampled.
 
 ## Record runs live with the SDK
 

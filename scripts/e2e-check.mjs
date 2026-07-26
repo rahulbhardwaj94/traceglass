@@ -12,6 +12,7 @@
  */
 import { execFileSync, spawn } from 'node:child_process';
 import {
+  appendFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -180,14 +181,111 @@ check('a tampered evidence file fails verification (exit 1, names the step)', ()
 });
 
 // 9. anchors
+const anchorsFile = join(out, 'anchors.jsonl');
 check('anchor --all writes idempotent anchor records', () => {
-  const anchorsFile = join(out, 'anchors.jsonl');
   cli(['anchor', '--all', '-o', anchorsFile]);
   const first = readFileSync(anchorsFile, 'utf8').trim().split('\n').length;
   cli(['anchor', '--all', '-o', anchorsFile]); // second run adds nothing
   const second = readFileSync(anchorsFile, 'utf8').trim().split('\n').length;
   assert(first >= 1, 'no anchors written');
   assert(first === second, `not idempotent: ${first} → ${second}`);
+});
+
+// 9a. the loop that anchoring exists for: a stored anchor is checked back.
+check('anchor --verify confirms stored runs against their anchors', () => {
+  const output = cli(['anchor', '--verify', '-o', anchorsFile]);
+  assert(/File integrity OK/.test(output), `chain not reported intact: ${output}`);
+  assert(new RegExp(`✓ ${runId}`).test(output), `run not verified: ${output}`);
+});
+
+check('verify --anchors reports the anchor alongside the chain and signature', () => {
+  const output = cli(['verify', runId, '--anchors', anchorsFile]);
+  assert(/Anchor: LOCAL only/.test(output), `no anchor verdict: ${output}`);
+});
+
+check('verify --require-external fails on a local-only anchor (exit 1)', () => {
+  // The honesty gate: a file-sink anchor must never be reported as third-party
+  // proof, and CI must be able to demand a real trust root.
+  const { code, output } = cliFails([
+    'verify',
+    runId,
+    '--anchors',
+    anchorsFile,
+    '--require-external',
+  ]);
+  assert(code === 1, `expected exit 1, got ${code}`);
+  assert(/not bound to out-of-band trust material/.test(output), `wrong reason: ${output}`);
+});
+
+check('a hand-written anchor line is detected (chain break + unknown run)', () => {
+  const forgedFile = join(out, 'forged-anchors.jsonl');
+  writeFileSync(forgedFile, readFileSync(anchorsFile, 'utf8'));
+  appendFileSync(
+    forgedFile,
+    JSON.stringify({
+      version: 2,
+      runId: 'run-that-never-happened',
+      runHash: 'f'.repeat(64),
+      anchoredAt: '2026-01-01T00:00:00.000Z',
+    }) + '\n',
+  );
+  const { code, output } = cliFails(['anchor', '--verify', '-o', forgedFile]);
+  assert(code === 1, `expected exit 1, got ${code}`);
+  assert(/FILE INTEGRITY FAILED/.test(output), `chain break not reported: ${output}`);
+  assert(/NO SUCH RUN is stored/.test(output), `fabricated run not reported: ${output}`);
+});
+
+check('anchoring refuses to reach the network without an explicit URL', () => {
+  // Zero egress by default is a stated product guarantee; these two flags are
+  // the only doors to it, and both must stay shut unless the operator opens one.
+  const tsa = cliFails(['anchor', '--all', '--sink', 'rfc3161', '-o', join(out, 'x.jsonl')]);
+  assert(tsa.code === 1 && /needs --tsa/.test(tsa.output), `TSA guard: ${tsa.output}`);
+  const rekor = cliFails([
+    'anchor',
+    '--all',
+    '--sink',
+    'rekor',
+    '--rekor',
+    'https://example.invalid',
+    '-o',
+    join(out, 'x.jsonl'),
+  ]);
+  assert(
+    rekor.code === 1 && /i-understand-public-log/.test(rekor.output),
+    `public-log consent guard: ${rekor.output}`,
+  );
+});
+
+check('a failed external anchor still records the run and exits 1', () => {
+  // Never lose evidence because a timestamp service was unreachable, and never
+  // mark something anchored that is not.
+  const offlineFile = join(out, 'offline-anchors.jsonl');
+  const { code, output } = cliFails([
+    'anchor',
+    '--all',
+    '--sink',
+    'rfc3161',
+    '--tsa',
+    'http://127.0.0.1:1', // connection refused, immediately
+    '--timeout',
+    '2000',
+    '-o',
+    offlineFile,
+  ]);
+  assert(code === 1, `expected exit 1, got ${code}`);
+  assert(/NOT externally anchored/.test(output), `failure not reported: ${output}`);
+  assert(/No evidence was lost/.test(output), `no reassurance about the record: ${output}`);
+  // --all covers every stored run, so find ours rather than assuming line 1.
+  const written = readFileSync(offlineFile, 'utf8')
+    .trim()
+    .split('\n')
+    .map((l) => JSON.parse(l));
+  const mine = written.find((r) => r.runId === runId);
+  assert(mine !== undefined, 'the run was NOT recorded locally after the TSA failed');
+  assert(
+    written.every((r) => r.proof === undefined),
+    'a record was marked anchored without a valid proof',
+  );
 });
 
 // 10. report from evidence alone (with the v0.4 compliance summary)
