@@ -23,7 +23,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const bin = join(root, 'packages/cli/dist/bin.js');
@@ -79,7 +79,7 @@ check('keygen generates a signing key', () => {
 let runId = '';
 check('SDK records a live run into the store', () => {
   const script = `
-    import { startRecording } from ${JSON.stringify(sdk)};
+    import { startRecording } from ${JSON.stringify(pathToFileURL(sdk).href)};
     const rec = startRecording({ name: 'outcome-check agent', id: 'check-run' });
     rec.step({ type: 'user_input', label: 'Dun account 4471', input: { account: '4471' } });
     rec.step({ type: 'tool_call', toolName: 'get_payment_status', label: 'Tool: get_payment_status',
