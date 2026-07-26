@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { accumulate, money, durationLabel, stepTypeLabel } from './format.js';
+import { accumulate, money, durationLabel, relTime, stepTypeLabel } from './format.js';
 import type { Step } from './types.js';
 
 function step(index: number, tokens: number, cost: number, durationMs: number): Step {
@@ -48,5 +48,22 @@ describe('formatters', () => {
   });
   it('humanizes step types', () => {
     expect(stepTypeLabel('llm_reasoning')).toBe('llm reasoning');
+  });
+});
+
+describe('relTime', () => {
+  const NOW = Date.parse('2026-07-26T12:00:00.000Z');
+
+  it('renders compact ages', () => {
+    expect(relTime('2026-07-26T11:59:40.000Z', NOW)).toBe('just now');
+    expect(relTime('2026-07-26T11:30:00.000Z', NOW)).toBe('30m ago');
+    expect(relTime('2026-07-26T09:00:00.000Z', NOW)).toBe('3h ago');
+    expect(relTime('2026-07-20T12:00:00.000Z', NOW)).toBe('6d ago');
+    expect(relTime('2026-04-26T12:00:00.000Z', NOW)).toBe('3mo ago');
+  });
+
+  it('is silent rather than wrong on a bad timestamp', () => {
+    expect(relTime('')).toBe('');
+    expect(relTime('not a date')).toBe('');
   });
 });

@@ -1215,3 +1215,449 @@ body.grabbing * {
     opacity: 0.25;
   }
 }
+
+/* ---------- fleet view (v0.10 landing) ---------- */
+.fleet {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 44px 24px 96px;
+}
+.fleet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+.fleet-headright {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.fleet-link,
+.picker-brandrow .fleet-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted);
+  text-decoration: none;
+  border: 1px solid var(--line2);
+  border-radius: 8px;
+  padding: 7px 12px;
+  background: var(--panel);
+  white-space: nowrap;
+  transition: color 0.13s ease, border-color 0.13s ease, background 0.13s ease;
+}
+.fleet-link:hover {
+  color: var(--accent);
+  border-color: color-mix(in oklab, var(--accent) 45%, transparent);
+  background: color-mix(in oklab, var(--accent) 10%, var(--panel));
+}
+.picker-brandrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+.fleet-inline {
+  color: var(--accent);
+}
+.fleet-sub {
+  color: var(--muted);
+  font-size: 14.5px;
+  line-height: 1.6;
+  max-width: 640px;
+  margin-top: 14px;
+}
+.fleet-err {
+  text-align: left;
+  margin-top: 16px;
+}
+.fl-policychip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 6px 11px;
+  border-radius: 8px;
+  border: 1px solid var(--line2);
+  background: var(--panel);
+  color: var(--muted);
+  white-space: nowrap;
+  cursor: help;
+}
+.fl-policychip.on {
+  color: var(--ok);
+  border-color: color-mix(in oklab, var(--ok) 40%, transparent);
+  background: color-mix(in oklab, var(--ok) 12%, var(--panel));
+}
+.fl-policychip.bad {
+  color: var(--err);
+  border-color: color-mix(in oklab, var(--err) 40%, transparent);
+  background: color-mix(in oklab, var(--err) 12%, var(--panel));
+}
+
+/* summary tiles */
+.fleet-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 10px;
+  margin-top: 26px;
+}
+.fl-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r2);
+  background: var(--panel);
+}
+.fl-tile-v {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.fl-tile-l {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.fl-tile.warn .fl-tile-v {
+  color: var(--warn);
+}
+.fl-tile.err .fl-tile-v {
+  color: var(--err);
+}
+.fl-tile.live .fl-tile-v {
+  color: var(--warn);
+}
+
+/* filter bar */
+.fleet-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 26px;
+}
+.fl-searchbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 300px;
+  min-width: 260px;
+  padding: 0 10px 0 12px;
+  border: 1px solid var(--line2);
+  border-radius: var(--r2);
+  background: var(--panel);
+}
+.fl-searchbox:focus-within {
+  border-color: color-mix(in oklab, var(--accent) 55%, transparent);
+}
+.fl-searchico {
+  display: flex;
+  color: var(--faint);
+  flex-shrink: 0;
+}
+.fl-search {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13.5px;
+  padding: 10px 0;
+}
+.fl-search::placeholder {
+  color: var(--faint);
+}
+.fl-deep {
+  flex-shrink: 0;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--faint);
+  background: var(--panel3);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 9px;
+  cursor: pointer;
+}
+.fl-deep.on {
+  color: var(--accent);
+  border-color: color-mix(in oklab, var(--accent) 45%, transparent);
+  background: color-mix(in oklab, var(--accent) 14%, var(--panel));
+}
+.fl-select {
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line2);
+  border-radius: var(--r2);
+  padding: 10px 12px;
+  cursor: pointer;
+}
+.fl-select:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--accent) 60%, transparent);
+  outline-offset: 1px;
+}
+
+/* issue chips */
+.fleet-chips {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+.fl-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 6px 13px 6px 10px;
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+.fl-chip:hover {
+  border-color: var(--line2);
+  color: var(--text);
+}
+.fl-chip.on {
+  color: var(--accent);
+  border-color: color-mix(in oklab, var(--accent) 50%, transparent);
+  background: color-mix(in oklab, var(--accent) 14%, var(--panel));
+}
+.fl-chip.on.tampered,
+.fl-chip.on.policy,
+.fl-chip.on.error {
+  color: var(--err);
+  border-color: color-mix(in oklab, var(--err) 50%, transparent);
+  background: color-mix(in oklab, var(--err) 14%, var(--panel));
+}
+.fl-chip.on.loop,
+.fl-chip.on.high_cost,
+.fl-chip.on.outlier,
+.fl-chip.on.unsigned {
+  color: var(--warn);
+  border-color: color-mix(in oklab, var(--warn) 50%, transparent);
+  background: color-mix(in oklab, var(--warn) 14%, var(--panel));
+}
+
+.fleet-band {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 22px 2px 12px;
+  flex-wrap: wrap;
+}
+.fl-count {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.fl-hits {
+  font-size: 12px;
+  color: var(--accent);
+}
+.fl-clear {
+  font: inherit;
+  font-size: 12px;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.fl-clear:hover {
+  color: var(--text);
+}
+
+/* rows */
+.fleet-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.fl-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--r2);
+  background: var(--panel);
+  color: var(--text);
+  text-decoration: none;
+  transition: background 0.13s ease, border-color 0.13s ease, transform 0.13s ease;
+}
+.fl-row:hover {
+  background: var(--panel2);
+  border-color: var(--line2);
+  transform: translateY(-1px);
+}
+.fl-row:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--accent) 65%, transparent);
+  outline-offset: 2px;
+}
+.fl-row.flagged {
+  border-left: 2px solid color-mix(in oklab, var(--warn) 55%, transparent);
+}
+.fl-led {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--ok) 16%, transparent);
+}
+.fl-led.failed {
+  background: var(--err);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--err) 16%, transparent);
+}
+.fl-led.running {
+  background: var(--warn);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--warn) 16%, transparent);
+  animation: tg-pulse 1.2s ease-in-out infinite;
+}
+.fl-main {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  flex: 1;
+}
+.fl-title {
+  font-size: 14.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fl-sub {
+  font-size: 12px;
+  color: var(--faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fl-flags {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+.fl-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 5px;
+  border: 1px solid var(--line2);
+  color: var(--muted);
+  background: var(--panel3);
+  white-space: nowrap;
+}
+.fl-flag.tampered,
+.fl-flag.policy,
+.fl-flag.error {
+  color: var(--err);
+  border-color: color-mix(in oklab, var(--err) 38%, transparent);
+  background: color-mix(in oklab, var(--err) 13%, var(--panel));
+}
+.fl-flag.loop,
+.fl-flag.high_cost,
+.fl-flag.outlier,
+.fl-flag.unsigned {
+  color: var(--warn);
+  border-color: color-mix(in oklab, var(--warn) 36%, transparent);
+  background: color-mix(in oklab, var(--warn) 12%, var(--panel));
+}
+.fl-flag.clean {
+  color: var(--ok);
+  border-color: color-mix(in oklab, var(--ok) 32%, transparent);
+  background: color-mix(in oklab, var(--ok) 10%, var(--panel));
+}
+.fl-stats {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--faint);
+  min-width: 92px;
+}
+.fl-stat b {
+  color: var(--text);
+  font-weight: 600;
+}
+.fl-when {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+  flex-shrink: 0;
+  min-width: 120px;
+}
+.fl-age {
+  font-size: 12px;
+  color: var(--muted);
+}
+.fl-id {
+  font-size: 11px;
+  color: var(--faint);
+  max-width: 190px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fl-go {
+  flex-shrink: 0;
+  display: flex;
+  color: var(--faint);
+}
+.fl-row:hover .fl-go {
+  color: var(--accent);
+}
+
+@media (max-width: 880px) {
+  .fl-row {
+    flex-wrap: wrap;
+  }
+  .fl-stats,
+  .fl-when {
+    align-items: flex-start;
+    min-width: 0;
+  }
+  .fl-when {
+    flex: 1;
+  }
+}

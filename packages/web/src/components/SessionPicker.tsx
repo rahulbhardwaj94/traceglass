@@ -1,23 +1,12 @@
 import { useEffect, useState } from 'react';
 import type { RunSummary, SessionInfo } from '../types.js';
 import { api } from '../api.js';
+import { relTime } from '../format.js';
 import { Icon } from './Icon.js';
 
 /** Navigate to a run by reloading with ?run=<id> — re-mounts App into replay. */
 function openRun(id: string) {
   window.location.search = `?run=${encodeURIComponent(id)}`;
-}
-
-function relTime(iso: string): string {
-  if (!iso) return '';
-  const d = Date.parse(iso);
-  if (!Number.isFinite(d)) return '';
-  const mins = Math.round((Date.now() - d) / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.round(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  return `${Math.round(hrs / 24)}d ago`;
 }
 
 /** Last path segment of a cwd, for a compact project label. */
@@ -64,9 +53,15 @@ export function SessionPicker() {
   return (
     <div className="picker">
       <header className="picker-head">
-        <div className="brand">
-          <span className="wordmark">traceglass</span>
-          <span className="tag">flight recorder</span>
+        <div className="picker-brandrow">
+          <div className="brand">
+            <span className="wordmark">traceglass</span>
+            <span className="tag">flight recorder</span>
+          </div>
+          {/* The fleet is the triage entry point; this screen is for ingestion. */}
+          <a className="fleet-link" href="./">
+            Fleet view{runs.length > 0 ? ` (${runs.length})` : ''} <Icon name="fwd" size={14} />
+          </a>
         </div>
         <p className="picker-sub">
           Pick an agent run to replay. traceglass ingests your Claude Code
