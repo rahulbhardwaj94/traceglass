@@ -54,7 +54,7 @@ and later are derived from the release commits themselves.
   than path, so ingest could not be forged this way. Authorization is now
   evaluated against the route Fastify actually matched
   (`req.routeOptions.url`), falling back to the decoded pathname. Affects
-  0.3.0–0.7.1. See `.github/advisories/`.
+  0.3.0–0.7.1. Disclosed as [GHSA-69r3-wwg5-x52j](https://github.com/rahulbhardwaj94/traceglass/security/advisories/GHSA-69r3-wwg5-x52j).
 
 ### Changed
 
@@ -79,7 +79,7 @@ and later are derived from the release commits themselves.
   in WAL mode the superseded row also survives until checkpoint. Fixed by
   enabling `secure_delete` on every connection and following `replaceRedacted`
   and `pruneOlderThan` with `checkpoint(TRUNCATE)` and `VACUUM`. Affects
-  0.6.0–0.7.0. See `.github/advisories/`.
+  0.6.0–0.7.0. Disclosed as [GHSA-gg8v-j45q-wq22](https://github.com/rahulbhardwaj94/traceglass/security/advisories/GHSA-gg8v-j45q-wq22).
 
 ### Changed
 

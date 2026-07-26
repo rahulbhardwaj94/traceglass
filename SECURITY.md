@@ -123,10 +123,13 @@ file.
 
 ## Known past vulnerabilities
 
-Both are fixed. Drafted advisory text lives in
+Both are fixed and publicly disclosed. Source text lives in
 [`.github/advisories/`](.github/advisories/).
 
-| ID (draft)         | Fixed in | Affects     | Summary                                                                     |
-| ------------------ | -------- | ----------- | --------------------------------------------------------------------------- |
-| `serve` auth bypass | 0.7.2    | 0.3.0–0.7.1 | Percent-encoded path skipped the read authorization gate on non-loopback binds |
-| `redact` residue    | 0.7.1    | 0.6.0–0.7.0 | Redacted values stayed recoverable from freed SQLite pages and the WAL       |
+| GHSA                                                                                                        | Fixed in | Affects     | Severity | Summary                                                                        |
+| ----------------------------------------------------------------------------------------------------------- | -------- | ----------- | -------- | ------------------------------------------------------------------------------ |
+| [GHSA-69r3-wwg5-x52j](https://github.com/rahulbhardwaj94/traceglass/security/advisories/GHSA-69r3-wwg5-x52j) | 0.7.2    | 0.3.0–0.7.1 | High     | Percent-encoded path skipped the read authorization gate on non-loopback binds |
+| [GHSA-gg8v-j45q-wq22](https://github.com/rahulbhardwaj94/traceglass/security/advisories/GHSA-gg8v-j45q-wq22) | 0.7.1    | 0.6.0–0.7.0 | Moderate | Redacted values stayed recoverable from freed SQLite pages and the WAL         |
+
+Both were found in internal review and fixed before any report from a user.
+Everything below 0.9.0 is deprecated on npm; 1.0.0 is the current release.

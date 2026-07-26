@@ -1,7 +1,10 @@
-# DRAFT — not published
+# Published as GHSA-69r3-wwg5-x52j
 
-**Do not treat this as a live advisory.** No GHSA requested, no CVE reserved.
-See [`README.md`](README.md).
+**Live advisory**, published 2026-07-26:
+https://github.com/rahulbhardwaj94/traceglass/security/advisories/GHSA-69r3-wwg5-x52j
+
+GitHub rated this **High**, matching the CVSS vector below. No CVE was
+requested. This file is the source text the advisory was created from.
 
 ---
 
