@@ -353,6 +353,49 @@ const run = await rec.end(); // verified, signed, stored — replay with `traceg
 If the process crashes mid-run, `traceglass recover` finalizes the journal into
 a `failed` run whose chain still verifies up to the crash point.
 
+## Record what you already run: MCP and OpenTelemetry
+
+The SDK asks you to write recording calls. These two adapters don't — they record
+the tool calls and spans your agent already produces, with the same guarantee:
+each step hash-chained and journaled at the moment it happens.
+
+**[`@traceglass/mcp`](./packages/mcp)** — one MCP session becomes one signed run.
+Wrap the client and every `tools/call` it makes is recorded; wrap a handler and
+every call your server serves is:
+
+```ts
+import { startMcpRecording } from '@traceglass/mcp';
+
+const rec = startMcpRecording({ name: 'support agent — ticket 8812' });
+const mcp = rec.wrapClient(client); // your @modelcontextprotocol/sdk Client
+
+await mcp.callTool({ name: 'lookup_order', arguments: { id: '4471' } });
+const run = await rec.end(); // verified, signed, stored
+```
+
+Tool name, arguments, the full result, `structuredContent` as the compliance-critical
+`dataPayload`, and timing land on the step; `isError: true` and thrown transport
+errors become `error` steps, so a failed run records as failed.
+
+**[`@traceglass/otel`](./packages/otel)** — if you already emit `gen_ai.*` spans,
+a span processor is the whole integration:
+
+```ts
+const provider = new NodeTracerProvider({
+  spanProcessors: [new TraceglassSpanProcessor({ currency: 'INR' })],
+});
+```
+
+One trace becomes one run (`otel-<traceId>`), finalized when its root span ends.
+It reads the **same attributes** as the offline OTLP ingester, so a span records
+identically whether it arrives live or through `traceglass ingest`, and it keeps the
+real `spanId`/`parentSpanId` so a step points back at the span it came from.
+
+Neither adapter takes a production dependency on the MCP or OpenTelemetry SDKs:
+both are structurally typed against those interfaces (asserted at compile time),
+so they run against whatever version you already have and the supply chain behind
+an audit record does not grow.
+
 ## Team collector mode
 
 `traceglass serve` turns the same binary into a self-hosted collector: a fixed
@@ -559,6 +602,10 @@ This is an npm-workspaces monorepo (Node ≥20, TypeScript, ESM):
   sessions), analysis (loops, cost), integrity (hash chain), append-only store,
   HTML report.
 - **`@traceglass/sdk`** — live-capture recorder (chain fixed at capture time).
+- **`@traceglass/mcp`** — MCP adapter: wraps a client or a tool handler so every
+  `tools/call` is recorded. No dependency on the MCP SDK.
+- **`@traceglass/otel`** — OpenTelemetry span processor: one trace per run, same
+  attribute mapping as the OTLP ingester. No dependency on `@opentelemetry/*`.
 - **`traceglass`** (`packages/cli`) — Fastify server/collector + `commander` binary.
 - **`@traceglass/web`** — React + Vite dashboard (bundled into the CLI on build).
 
