@@ -1,0 +1,131 @@
+name: 'traceglass policy check'
+description: >-
+  Fail the build when a recorded agent run violates its guardrails, and post the
+  compliance summary as a pull-request comment.
+author: 'traceglass'
+
+branding:
+  icon: 'shield'
+  color: 'blue'
+
+inputs:
+  evidence:
+    description: >-
+      The record to check: a path to an exported `.tgev` evidence file, or the
+      id of a run in the traceglass store on this runner.
+    required: true
+
+  policy:
+    description: 'Path to the guardrail policy JSON file.'
+    required: true
+
+  comment:
+    description: >-
+      Post the compliance summary as a pull-request comment, updating the same
+      comment on re-runs instead of adding another. Needs `pull-requests: write`.
+      Ignored on events that have no pull request.
+    required: false
+    default: 'true'
+
+  summary:
+    description: 'Write the compliance summary to the job summary page.'
+    required: false
+    default: 'true'
+
+  fail-on-violation:
+    description: >-
+      Exit non-zero when the record fails integrity or policy. Set to `false` to
+      report only and gate on the `ok` output yourself.
+    required: false
+    default: 'true'
+
+  anchors:
+    description: >-
+      Optional path to an anchors JSONL file. When set, the run is also checked
+      against its anchor records (see `traceglass anchor`).
+    required: false
+    default: ''
+
+  tsa-cert:
+    description: 'PEM of the expected RFC 3161 TSA certificate. Pins timestamp anchors.'
+    required: false
+    default: ''
+
+  rekor-key:
+    description: "PEM of the transparency log's public key. Pins Rekor anchors."
+    required: false
+    default: ''
+
+  require-external:
+    description: >-
+      Fail unless an anchor verifies against trust material supplied out of band
+      (`tsa-cert` / `rekor-key`). Without this, a self-attested anchor passes.
+      Requires `anchors`.
+    required: false
+    default: 'false'
+
+  version:
+    description: 'npm version of the `traceglass` CLI to run.'
+    required: false
+    default: 'latest'
+
+  bin:
+    description: >-
+      Path to an already-built traceglass entrypoint (e.g.
+      `packages/cli/dist/bin.js`). Overrides `version`; useful in the
+      traceglass repo itself and in monorepos that build the CLI in CI.
+    required: false
+    default: ''
+
+  github-token:
+    description: 'Token used to post the pull-request comment.'
+    required: false
+    default: ${{ github.token }}
+
+  github-api-url:
+    description: 'REST API base URL. Override for GitHub Enterprise Server.'
+    required: false
+    default: ${{ github.api_url }}
+
+outputs:
+  ok:
+    description: '`true` when integrity and policy both passed.'
+    value: ${{ steps.check.outputs.ok }}
+  violations:
+    description: 'Number of policy violations.'
+    value: ${{ steps.check.outputs.violations }}
+  run-id:
+    description: 'Id of the run that was checked.'
+    value: ${{ steps.check.outputs.run-id }}
+  anchor-strength:
+    description: '`none`, `local`, `self-attested` or `external` — empty unless `anchors` was set.'
+    value: ${{ steps.check.outputs.anchor-strength }}
+  report:
+    description: 'Path to the rendered Markdown summary.'
+    value: ${{ steps.check.outputs.report }}
+  json:
+    description: 'Path to the raw `traceglass check --json` output.'
+    value: ${{ steps.check.outputs.json }}
+
+runs:
+  using: 'composite'
+  steps:
+    - id: check
+      # bash on every runner, Windows included (git-bash), so one form works
+      # across the whole matrix.
+      shell: bash
+      run: node "$GITHUB_ACTION_PATH/main.mjs"
+      env:
+        INPUT_EVIDENCE: ${{ inputs.evidence }}
+        INPUT_POLICY: ${{ inputs.policy }}
+        INPUT_COMMENT: ${{ inputs.comment }}
+        INPUT_SUMMARY: ${{ inputs.summary }}
+        INPUT_FAIL_ON_VIOLATION: ${{ inputs.fail-on-violation }}
+        INPUT_ANCHORS: ${{ inputs.anchors }}
+        INPUT_TSA_CERT: ${{ inputs.tsa-cert }}
+        INPUT_REKOR_KEY: ${{ inputs.rekor-key }}
+        INPUT_REQUIRE_EXTERNAL: ${{ inputs.require-external }}
+        INPUT_VERSION: ${{ inputs.version }}
+        INPUT_BIN: ${{ inputs.bin }}
+        INPUT_GITHUB_TOKEN: ${{ inputs.github-token }}
+        INPUT_GITHUB_API_URL: ${{ inputs.github-api-url }}

@@ -1,0 +1,62 @@
+{
+  "formatVersion": 1,
+  "exportedAt": "2026-07-25T09:00:00.000Z",
+  "run": {
+    "id": "vec-uni",
+    "name": "unicode run",
+    "startedAt": "2026-07-25T09:00:00.000Z",
+    "endedAt": "2026-07-25T09:00:10.000Z",
+    "status": "completed",
+    "currency": "INR",
+    "totals": {
+      "tokens": 12,
+      "cost": 0,
+      "durationMs": 40,
+      "steps": 1
+    },
+    "warnings": [],
+    "steps": [
+      {
+        "id": "vec-uni:0",
+        "runId": "vec-uni",
+        "index": 0,
+        "type": "tool_call",
+        "label": "Tool: search café",
+        "startedAt": "2026-07-25T09:00:00.000Z",
+        "durationMs": 40,
+        "tokens": 12,
+        "cost": 0,
+        "toolName": "search",
+        "input": {
+          "unicode": {
+            "nfc": "café",
+            "nfd": "café",
+            "emoji": "👩‍🚀"
+          },
+          "note": "café"
+        },
+        "output": {
+          "ok": true
+        },
+        "spanId": "00000000000000d1",
+        "commitments": {
+          "input.unicode.nfc": "0866db3248e7728150f2a4feda03ba2b00349ecceb5bbe2d67ce3129d09b31d1",
+          "input.unicode.nfd": "c3dddca2fc2de43da8807d36c2295596e1a3352ec8f45366d5cf56b89ac35afa",
+          "input.unicode.emoji": "37f30e9f3be8e091cba8ec54455373ee0c6c4b1a1a53fbd06225b1c82d404949",
+          "input.note": "2cc96db796ace7cfe9020b6c4bbba8282a90c51d0f72486c61ff3f9dc7127a34",
+          "output.ok": "a097a9b4a307474f261f5534e5e6c98408b9518f0819e2f3ea9b2a9d49c12241"
+        },
+        "salts": {
+          "input.unicode.nfc": "d39c3972b01f5993eb0b51515351eeab",
+          "input.unicode.nfd": "bf5a1a81d474c4ea17909133c316c451",
+          "input.unicode.emoji": "d50f80860dba2362da9df62f1ea97b4c",
+          "input.note": "4e80af9a3f24ef7c0a2ceedfc67339c5",
+          "output.ok": "4cd68017f16266a77a185b148ed195a9"
+        },
+        "prevHash": "",
+        "hash": "b555530dfabb969c81ecd2b61ca3d6256124453e3695d2246752dd136f90ac19"
+      }
+    ],
+    "runHash": "b555530dfabb969c81ecd2b61ca3d6256124453e3695d2246752dd136f90ac19"
+  }
+}
