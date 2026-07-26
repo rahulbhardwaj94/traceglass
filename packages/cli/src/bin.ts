@@ -40,7 +40,17 @@ import { dataDir, storePath } from './paths.js';
 import { DEFAULT_BODY_LIMIT, DEFAULT_RATE_LIMIT, startServe, startServer } from './server.js';
 import { openBrowser } from './open-browser.js';
 import { generateKeys, maybeSign } from './keys.js';
-import { FileAnchorSink, anchorRecordForRun, defaultAnchorsPath } from './anchors.js';
+import {
+  FileAnchorSink,
+  Rfc3161AnchorSink,
+  SigstoreAnchorSink,
+  anchorRecordForRun,
+  defaultAnchorsPath,
+  readAnchorFile,
+  verifyRunAgainstAnchors,
+  type AnchorCheck,
+  type AnchorSink,
+} from './anchors.js';
 import { sweepSessions } from './watch.js';
 
 const program = new Command();
@@ -270,6 +280,39 @@ function loadRunOrEvidence(store: RunStore, arg: string): Run {
   return run;
 }
 
+/** Read a PEM trust-material file, dying with a clear message if unreadable. */
+function readPem(file: string | undefined, label: string): string | undefined {
+  if (!file) return undefined;
+  try {
+    return readFileSync(resolve(file), 'utf8');
+  } catch {
+    return die(`Cannot read ${label}: ${file}`);
+  }
+}
+
+/**
+ * Check a run against its anchor records. Returns null when the operator did
+ * not ask for anchor checking — no anchors file is read unless requested.
+ */
+function checkAnchors(
+  run: Run,
+  opts: { anchors?: string; tsaCert?: string; rekorKey?: string },
+): { check: AnchorCheck; fileOk: boolean; fileProblems: string[] } | null {
+  if (!opts.anchors) return null;
+  const path = resolve(opts.anchors);
+  if (!existsSync(path)) return die(`No anchors file at ${opts.anchors}.`);
+  const file = readAnchorFile(path);
+  const fileProblems = [
+    ...file.malformed.map((m) => `anchors file line ${m.line}: ${m.reason}`),
+    ...file.chainBreaks.map((c) => `anchors file line ${c.line}: ${c.reason}`),
+  ];
+  const check = verifyRunAgainstAnchors(run, file.records, {
+    tsaCertPem: readPem(opts.tsaCert, '--tsa-cert'),
+    rekorKeyPem: readPem(opts.rekorKey, '--rekor-key'),
+  });
+  return { check, fileOk: file.ok, fileProblems };
+}
+
 program
   .command('verify')
   .description(
@@ -277,21 +320,91 @@ program
   )
   .argument('<runId-or-file>', 'id of a stored run, or path to an exported evidence file')
   .option('--json', 'machine-readable JSON output (for CI)')
-  .action((arg: string, opts: { json?: boolean }) => {
-    const store = openStore();
-    const run = loadRunOrEvidence(store, arg);
-    const result = verifyRunFull(run);
-    if (opts.json) {
-      console.log(JSON.stringify({ runId: run.id, ...result }, null, 2));
-    } else {
-      console.log(result.chain.message);
-      console.log(result.signature.message);
-      console.log(`runHash: ${result.chain.storedRunHash}`);
-      if (!result.chain.ok) console.log(`expected: ${result.chain.expectedRunHash}`);
-    }
-    store.close();
-    if (!result.ok) process.exit(1);
-  });
+  .option(
+    '--anchors <file>',
+    'also check the run against its anchor records (see `traceglass anchor`)',
+  )
+  .option('--require-anchor', 'exit 1 if the run has no matching anchor record')
+  .option(
+    '--require-external',
+    'exit 1 unless an anchor is proven against out-of-band trust material',
+  )
+  .option('--tsa-cert <file>', 'PEM of the expected TSA certificate (pins RFC 3161 anchors)')
+  .option('--rekor-key <file>', "PEM of the transparency log's public key (pins Rekor anchors)")
+  .action(
+    (
+      arg: string,
+      opts: {
+        json?: boolean;
+        anchors?: string;
+        requireAnchor?: boolean;
+        requireExternal?: boolean;
+        tsaCert?: string;
+        rekorKey?: string;
+      },
+    ) => {
+      const store = openStore();
+      const run = loadRunOrEvidence(store, arg);
+      const result = verifyRunFull(run);
+      const anchors = checkAnchors(run, opts);
+
+      // An anchor that disagrees, or a tampered anchors file, is a hard failure.
+      let ok = result.ok;
+      if (anchors) {
+        if (!anchors.check.ok || !anchors.fileOk) ok = false;
+        if (opts.requireAnchor && !anchors.check.matched) ok = false;
+        if (opts.requireExternal && anchors.check.strength !== 'external') ok = false;
+      } else if (opts.requireAnchor || opts.requireExternal) {
+        store.close();
+        return die('--require-anchor/--require-external need --anchors <file>.');
+      }
+
+      if (opts.json) {
+        console.log(
+          JSON.stringify(
+            {
+              runId: run.id,
+              ...result,
+              // Overrides result.ok deliberately: an anchor mismatch fails the
+              // whole verification even when the chain and signature are fine.
+              ok,
+              ...(anchors
+                ? {
+                    anchor: anchors.check,
+                    anchorsFile: { ok: anchors.fileOk, problems: anchors.fileProblems },
+                  }
+                : {}),
+            },
+            null,
+            2,
+          ),
+        );
+      } else {
+        console.log(result.chain.message);
+        console.log(result.signature.message);
+        console.log(`runHash: ${result.chain.storedRunHash}`);
+        if (!result.chain.ok) console.log(`expected: ${result.chain.expectedRunHash}`);
+        if (anchors) {
+          for (const line of anchors.check.messages) console.log(line);
+          for (const p of anchors.fileProblems) console.log(`  ✗ ${p}`);
+          for (const p of anchors.check.problems) console.log(`  ✗ ${p}`);
+          if (anchors.check.provenExistedBy) {
+            console.log(`  This record provably existed by ${anchors.check.provenExistedBy}.`);
+          }
+          if (opts.requireAnchor && !anchors.check.matched) {
+            console.log('  ✗ --require-anchor: no matching anchor record.');
+          }
+          if (opts.requireExternal && anchors.check.strength !== 'external') {
+            console.log(
+              `  ✗ --require-external: strongest anchor is "${anchors.check.strength}", not bound to out-of-band trust material.`,
+            );
+          }
+        }
+      }
+      store.close();
+      if (!ok) process.exit(1);
+    },
+  );
 
 program
   .command('check')
@@ -919,34 +1032,250 @@ program
 program
   .command('anchor')
   .description(
-    'Append run anchors (runHash + signature) to a JSONL file you can push to WORM storage',
+    'Pin run anchors to a JSONL file, and optionally to an external trust root (RFC 3161 TSA or a Sigstore/Rekor transparency log)',
   )
   .argument('[runId]', 'anchor a single stored run')
   .option('--all', 'anchor every stored run')
   .option('-o, --out <file>', 'anchors file (default: ~/.traceglass/anchors.jsonl)')
-  .action(async (runId: string | undefined, opts: { all?: boolean; out?: string }) => {
-    if (!runId && !opts.all) return die('Provide a runId or --all.');
-    const store = openStore();
-    const runs: Run[] = [];
-    if (opts.all) {
-      for (const summary of store.listRuns()) {
-        const run = store.getRun(summary.id);
-        if (run) runs.push(run);
+  .option(
+    '--sink <kind>',
+    'file (default, no network) | rfc3161 | rekor — the last two send one hash off this machine',
+    'file',
+  )
+  .option('--tsa <url>', 'RFC 3161 Time Stamping Authority URL (required for --sink rfc3161)')
+  .option('--tsa-cert <file>', "PEM of the TSA's certificate; pins the token to a known authority")
+  .option('--tsa-policy <oid>', 'request a specific TSA policy OID')
+  .option('--rekor <url>', 'Rekor instance URL (required for --sink rekor)')
+  .option('--rekor-key <file>', "PEM of the log's public key; verifies the entry timestamp")
+  .option(
+    '--i-understand-public-log',
+    'required for --sink rekor: submissions to a public log are permanent and cannot be retracted',
+  )
+  .option('--timeout <ms>', 'network timeout per request', '15000')
+  .option('--verify', 'verify existing anchor records against the store instead of writing any')
+  .option('--json', 'machine-readable output')
+  .action(
+    async (
+      runId: string | undefined,
+      opts: {
+        all?: boolean;
+        out?: string;
+        sink: string;
+        tsa?: string;
+        tsaCert?: string;
+        tsaPolicy?: string;
+        rekor?: string;
+        rekorKey?: string;
+        iUnderstandPublicLog?: boolean;
+        timeout: string;
+        verify?: boolean;
+        json?: boolean;
+      },
+    ) => {
+      const anchorsPath = resolve(opts.out ?? defaultAnchorsPath());
+      const store = openStore();
+
+      /* ---------------------- verification mode ------------------------- */
+      if (opts.verify) {
+        const file = readAnchorFile(anchorsPath);
+        const targets = runId ? [runId] : [...new Set(file.records.map((r) => r.runId))].sort();
+        const tsaCertPem = readPem(opts.tsaCert, '--tsa-cert');
+        const rekorKeyPem = readPem(opts.rekorKey, '--rekor-key');
+
+        const results = targets.map((id) => {
+          const run = store.getRun(id);
+          if (!run) {
+            return {
+              runId: id,
+              ok: false,
+              strength: 'none' as const,
+              problems: [
+                `anchor record exists for "${id}" but NO SUCH RUN is stored — the record may be fabricated`,
+              ],
+              messages: [],
+            };
+          }
+          const check = verifyRunAgainstAnchors(run, file.records, {
+            tsaCertPem,
+            rekorKeyPem,
+          });
+          return {
+            runId: id,
+            ok: check.ok && check.matched,
+            strength: check.strength,
+            problems: check.problems,
+            messages: check.messages,
+          };
+        });
+
+        const fileProblems = [
+          ...file.malformed.map((m) => `line ${m.line}: ${m.reason}`),
+          ...file.chainBreaks.map((c) => `line ${c.line}: ${c.reason}`),
+        ];
+        const ok = file.ok && results.every((r) => r.ok);
+
+        if (opts.json) {
+          console.log(
+            JSON.stringify(
+              {
+                anchorsFile: anchorsPath,
+                ok,
+                file: { ok: file.ok, problems: fileProblems },
+                runs: results,
+              },
+              null,
+              2,
+            ),
+          );
+        } else {
+          console.log(`Anchors file: ${anchorsPath}`);
+          console.log(
+            file.ok
+              ? `  File integrity OK — ${file.records.length} record(s), chain intact.`
+              : `  ✗ FILE INTEGRITY FAILED — records may have been inserted, edited or removed:`,
+          );
+          for (const p of fileProblems) console.log(`    ✗ ${p}`);
+          for (const r of results) {
+            console.log(`  ${r.ok ? '✓' : '✗'} ${r.runId} [${r.strength}]`);
+            for (const m of r.messages) console.log(`      ${m}`);
+            for (const p of r.problems) console.log(`      ✗ ${p}`);
+          }
+        }
+        store.close();
+        if (!ok) process.exit(1);
+        return;
       }
-    } else if (runId) {
-      const run = store.getRun(runId);
-      if (!run) return die(`No stored run with id "${runId}".`);
-      runs.push(run);
-    }
-    const sink = new FileAnchorSink(resolve(opts.out ?? defaultAnchorsPath()));
-    const existing = sink.existingRunIds();
-    const fresh = runs.filter((r) => !existing.has(r.id));
-    await sink.append(fresh.map(anchorRecordForRun));
-    const skipped = runs.length - fresh.length;
-    console.log(
-      `Anchored ${fresh.length} run(s)${skipped > 0 ? ` (${skipped} already anchored)` : ''} → ${resolve(opts.out ?? defaultAnchorsPath())}`,
-    );
-    store.close();
-  });
+
+      /* ------------------------ anchoring mode -------------------------- */
+      if (!runId && !opts.all) return die('Provide a runId or --all.');
+
+      const runs: Run[] = [];
+      if (opts.all) {
+        for (const summary of store.listRuns()) {
+          const run = store.getRun(summary.id);
+          if (run) runs.push(run);
+        }
+      } else if (runId) {
+        const run = store.getRun(runId);
+        if (!run) return die(`No stored run with id "${runId}".`);
+        runs.push(run);
+      }
+
+      const timeoutMs = numericOption(opts.timeout, '--timeout', { min: 1 }) ?? 15_000;
+      const fileSink = new FileAnchorSink(anchorsPath);
+
+      // Sink selection. The default never touches the network; the others are
+      // reachable only via an explicit URL the operator typed.
+      let sink: AnchorSink;
+      switch (opts.sink) {
+        case 'file':
+          sink = fileSink;
+          break;
+        case 'rfc3161': {
+          if (!opts.tsa) {
+            return die(
+              '--sink rfc3161 needs --tsa <url>. traceglass never contacts a timestamping\n' +
+                '  authority you did not name. Only a SHA-256 hash is sent — no run content.',
+            );
+          }
+          sink = new Rfc3161AnchorSink(fileSink, {
+            tsaUrl: opts.tsa,
+            timeoutMs,
+            pinnedCertPem: readPem(opts.tsaCert, '--tsa-cert'),
+            reqPolicy: opts.tsaPolicy,
+          });
+          break;
+        }
+        case 'rekor': {
+          if (!opts.rekor) {
+            return die(
+              '--sink rekor needs --rekor <url>. traceglass never contacts a transparency\n' +
+                '  log you did not name. Only a SHA-256 hash, a signature and your public\n' +
+                '  key are sent — no run content.',
+            );
+          }
+          if (!opts.iUnderstandPublicLog) {
+            return die(
+              'Refusing to publish without --i-understand-public-log.\n' +
+                '  A Rekor entry is PERMANENT and PUBLIC. It cannot be retracted. It does not\n' +
+                "  reveal your run's contents, but it does reveal that a record exists and when,\n" +
+                '  and links every entry made with the same key. Re-run with the flag to accept.',
+            );
+          }
+          sink = new SigstoreAnchorSink(fileSink, {
+            rekorUrl: opts.rekor,
+            timeoutMs,
+            logKeyPem: readPem(opts.rekorKey, '--rekor-key'),
+          });
+          break;
+        }
+        default:
+          return die(`Unknown --sink "${opts.sink}". Use file, rfc3161 or rekor.`);
+      }
+
+      // Dedupe on the PAIR (runId, runHash). A run id already present with a
+      // DIFFERENT hash is a conflict, not a duplicate — surfacing it loudly is
+      // the difference between "already done" and "someone got here first".
+      const existing = fileSink.existingAnchors();
+      const fresh: Run[] = [];
+      const conflicts: Array<{ runId: string; anchored: string[] }> = [];
+      let skipped = 0;
+      for (const run of runs) {
+        const hashes = existing.get(run.id);
+        if (!hashes) {
+          fresh.push(run);
+        } else if (hashes.has(run.runHash)) {
+          skipped += 1; // genuinely the same anchor, already recorded
+        } else {
+          conflicts.push({ runId: run.id, anchored: [...hashes] });
+          fresh.push(run); // record the genuine anchor anyway — never suppress it
+        }
+      }
+
+      const outcomes = await sink.append(fresh.map(anchorRecordForRun));
+      const failures = outcomes.filter((o) => o.error !== null);
+      const proven = outcomes.filter((o) => o.proof !== null).length;
+
+      if (opts.json) {
+        console.log(
+          JSON.stringify(
+            { anchorsFile: anchorsPath, sink: sink.kind, anchored: outcomes, skipped, conflicts },
+            null,
+            2,
+          ),
+        );
+      } else {
+        console.log(
+          `Anchored ${outcomes.length} run(s)${skipped > 0 ? ` (${skipped} already anchored)` : ''} → ${anchorsPath}`,
+        );
+        if (sink.kind !== 'file') {
+          console.log(
+            `  Sink: ${sink.kind} · ${proven}/${outcomes.length} carry an external proof.`,
+          );
+        }
+        for (const c of conflicts) {
+          console.log(
+            `  ! CONFLICT for "${c.runId}": the file already pins ${c.anchored.join(', ')}, which is NOT this run's hash.`,
+          );
+          console.log(
+            `    The genuine anchor was appended anyway. Investigate — someone may have pre-registered a false anchor.`,
+          );
+        }
+        for (const f of failures) {
+          console.log(`  ✗ ${f.runId}: ${f.error}`);
+        }
+        if (failures.length > 0) {
+          console.log(
+            `\n  ${failures.length} run(s) were recorded locally but are NOT externally anchored.\n` +
+              `  No evidence was lost. Re-run the command to retry the ${sink.kind} sink.`,
+          );
+        }
+      }
+
+      store.close();
+      // A conflict or a failed external anchor must be visible to CI.
+      if (failures.length > 0 || conflicts.length > 0) process.exit(1);
+    },
+  );
 
 program.parseAsync(process.argv);

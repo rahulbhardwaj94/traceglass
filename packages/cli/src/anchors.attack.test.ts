@@ -1,24 +1,38 @@
 import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { RunStore, ingestAndFinalize, verifyRunFull, type Run } from '@traceglass/core';
 import { startRecording } from '@traceglass/sdk';
-import { FileAnchorSink, anchorRecordForRun, type AnchorRecord } from './anchors.js';
+import {
+  FileAnchorSink,
+  anchorDigest,
+  anchorRecordForRun,
+  anchorStatement,
+  readAnchorFile,
+  verifyRunAgainstAnchors,
+  type AnchorRecord,
+} from './anchors.js';
 import { generateKeys, maybeSign } from './keys.js';
+import { parseTimeStampResponse } from './rfc3161.js';
 
 /**
  * ADVERSARIAL SUITE — anchor forgery (attack 3).
  *
- * The pitch for anchors is that they externalize a run's integrity anchor so it
- * can be pinned somewhere the store cannot touch — "a verifier later compares a
- * run's recomputed anchor against this out-of-band copy" (anchors.ts).
+ * These tests were written against 0.8, where they documented five open holes:
+ * anchors.jsonl was WRITE-ONLY. Nothing ever read a record back to compare it
+ * against a run, so a forged entry was not merely undetected — there was no
+ * detector, and `traceglass anchor --all` could be made to silently skip the
+ * genuine anchor.
  *
- * These tests ask the obvious attacker question: what happens if I write into
- * that file myself? The answer is that anchors.jsonl is currently WRITE-ONLY.
- * Nothing in the codebase ever reads a record back to compare it against a run,
- * so a forged entry is not merely undetected — there is no detector.
+ * They are now regression tests. Each one still performs the original attack;
+ * what changed is that the attack is caught, and the assertions pin exactly
+ * WHICH mechanism catches it. If any of these starts passing the attacker's
+ * way again, the anchoring feature has gone back to being decorative.
  */
+
+const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), '..', 'test-fixtures');
 
 let home: string;
 let savedHome: string | undefined;
@@ -38,6 +52,7 @@ beforeAll(async () => {
   rec.step({ type: 'tool_call', toolName: 'payments.refund', label: 'refund', cost: 1 });
   genuine = await rec.end();
 
+  // The recorder already persisted the run into TRACEGLASS_HOME's store.
   store = new RunStore(join(home, 'traceglass.sqlite'));
 });
 
@@ -66,27 +81,20 @@ describe('ATTACK 3: anchor forgery', () => {
     expect(record!.signature).toBe(genuine.signature!.signature);
   });
 
-  it('VULNERABILITY: a hand-written anchor for a run that never existed is accepted', async () => {
+  it('FIXED: a hand-written anchor for a run that never existed is now detected', async () => {
     /*
-     * VULNERABILITY: anchors.jsonl is append-only text written by the CLI with
-     * appendFileSync. It carries no signature over its own contents, no
-     * sequence number, and no chaining between entries. An attacker with write
-     * access to the file — the same access needed to edit the store — can
-     * fabricate an entry for a run that was never recorded.
+     * WAS: anchors.jsonl carried no signature over its own contents, no
+     * sequence number and no chaining, so an attacker with write access could
+     * fabricate an entry for a run that was never recorded and then point at
+     * "the anchor we pinned in S3" as independent corroboration.
      *
-     * REAL-WORLD CONSEQUENCE: the anchors file is what the docs tell operators
-     * to push to WORM storage and treat as the out-of-band source of truth. An
-     * attacker who fabricates an entry can later produce a matching forged
-     * evidence file (see the key-substitution attack in
-     * integrity.attack.test.ts) and point at "the anchor we pinned in S3" as
-     * independent corroboration. The forgery is corroborating itself.
-     *
-     * WHAT SHOULD HAPPEN: anchor records should be signed, and the file should
-     * chain each record to the previous one so insertions and rewrites are
-     * detectable.
+     * NOW: records chain to the SHA-256 of the preceding line and carry an
+     * Ed25519 signature over their own contents. Appending a line by hand
+     * breaks the chain, and the attacker cannot produce a record signature
+     * without the private key.
      */
     const forged: AnchorRecord = {
-      version: 1,
+      version: 2,
       runId: 'run-that-never-happened',
       runHash: 'f'.repeat(64),
       keyId: '0123456789abcdef',
@@ -95,74 +103,74 @@ describe('ATTACK 3: anchor forgery', () => {
     };
     appendFileSync(anchorsFile, JSON.stringify(forged) + '\n');
 
-    // It is indistinguishable from a genuine record in every observable way.
-    const records = readAnchors();
-    const found = records.find((r) => r.runId === 'run-that-never-happened');
-    expect(found).toBeDefined(); // <-- THE HOLE
-    expect(found!.version).toBe(1);
-    // The run it claims to anchor does not exist anywhere.
-    expect(store.getRun('run-that-never-happened')).toBeNull();
+    const file = readAnchorFile(anchorsFile);
+    expect(file.ok).toBe(false); // <-- THE HOLE IS CLOSED
+    expect(file.chainBreaks).toHaveLength(1);
+    expect(file.chainBreaks[0]!.reason).toMatch(/claims to be the first/);
 
-    // And the ONLY consumer of this file treats it as authoritative.
-    const sink = new FileAnchorSink(anchorsFile);
-    expect(sink.existingRunIds().has('run-that-never-happened')).toBe(true);
+    // The run it claims to anchor still does not exist...
+    expect(store.getRun('run-that-never-happened')).toBeNull();
+    // ...and it carries no record signature, because forging one needs the key.
+    const forgedRecord = file.records.find((r) => r.runId === 'run-that-never-happened');
+    expect(forgedRecord?.recordSignature).toBeUndefined();
+
+    // Clean up so later cases start from a coherent file.
+    writeFileSync(
+      anchorsFile,
+      readFileSync(anchorsFile, 'utf8')
+        .split('\n')
+        .filter((l) => l.trim() && !l.includes('run-that-never-happened'))
+        .join('\n') + '\n',
+    );
   });
 
-  it('VULNERABILITY: no code path anywhere verifies a run against its anchor', async () => {
+  it('FIXED: `verify` now checks a run against its anchor and catches tampering', () => {
     /*
-     * VULNERABILITY: this is the root of attack 3. `FileAnchorSink` has
-     * `append()` and `existingRunIds()`. There is no `verify()`, no CLI command
-     * that reads anchors and compares them to stored runs, and `traceglass
-     * verify` never opens the file. The anchors are written, and then nothing
-     * ever looks at them again.
+     * WAS: `FileAnchorSink` had only append() and existingRunIds(). No CLI
+     * command read anchors back, so if a run's hash was silently changed in
+     * the store the pinned anchor would disagree and nobody would ever find
+     * out — detecting the very tampering anchors exist to catch required an
+     * operator to diff two files by hand.
      *
-     * REAL-WORLD CONSEQUENCE: the anchoring feature currently provides zero
-     * automated detection. If a run's hash is silently changed in the store,
-     * the pinned anchor will disagree — and nobody will ever find out, because
-     * no code performs the comparison. Detecting the very tampering anchors
-     * exist to catch requires an operator to diff two files by hand.
-     *
-     * WHAT SHOULD HAPPEN: ship `traceglass verify --anchors <file>` that
-     * recomputes each run's anchor and reports disagreements, and wire it into
-     * the `check` command.
+     * NOW: verifyRunAgainstAnchors() performs the comparison, and
+     * `traceglass verify --anchors` / `traceglass anchor --verify` call it.
      */
-    const sink = new FileAnchorSink(anchorsFile);
-    const surface = Object.getOwnPropertyNames(Object.getPrototypeOf(sink));
-    expect(surface.sort()).toEqual(['append', 'constructor', 'existingRunIds']); // <-- no verify
+    const surface = Object.getOwnPropertyNames(
+      Object.getPrototypeOf(new FileAnchorSink(anchorsFile)),
+    );
+    expect(surface).toContain('existingAnchors');
 
-    // Demonstrate the miss end to end: alter the stored run's anchor, then show
-    // that everything the product offers still reports success.
+    const records = readAnchorFile(anchorsFile).records;
+
+    // The genuine run agrees with its anchor.
+    const good = verifyRunAgainstAnchors(genuine, records);
+    expect(good.matched).toBe(true);
+    expect(good.ok).toBe(true);
+
+    // A run whose hash was altered in the store is now caught BY THE ANCHOR,
+    // independently of the signature.
     const tamperedRun: Run = { ...genuine, runHash: 'a'.repeat(64) };
-    const anchored = readAnchors().find((r) => r.runId === 'anchored-run')!;
-    expect(anchored.runHash).not.toBe(tamperedRun.runHash); // the anchor DISAGREES
-
-    // The disagreement is real and would be trivially detectable...
-    expect(anchored.runHash).toBe(genuine.runHash);
-    // ...but nothing does the comparison, so the only thing that catches this
-    // tampered run is the signature — not the anchor.
+    const bad = verifyRunAgainstAnchors(tamperedRun, records);
+    expect(bad.ok).toBe(false); // <-- THE HOLE IS CLOSED
+    expect(bad.matched).toBe(false);
+    expect(bad.problems.join(' ')).toMatch(/anchor MISMATCH/);
+    // The signature catches it too; the point is that the anchor no longer
+    // stays silent when the signature is the only thing objecting.
     expect(verifyRunFull(tamperedRun).signature.ok).toBe(false);
   });
 
-  it('VULNERABILITY: a pre-registered anchor SUPPRESSES the genuine one', async () => {
+  it('FIXED: a pre-registered anchor no longer suppresses the genuine one', async () => {
     /*
-     * VULNERABILITY: `existingRunIds()` dedupes purely by runId, so
-     * `traceglass anchor` skips any run already named in the file — regardless
-     * of whether the recorded runHash matches.
+     * WAS: existingRunIds() deduped purely by runId, so an attacker who guessed
+     * a run id could write a bogus anchor for it FIRST; the operator's later
+     * `traceglass anchor --all` silently skipped the genuine anchor and
+     * reported "(1 already anchored)" as a successful no-op.
      *
-     * REAL-WORLD CONSEQUENCE: an attacker who can guess a run id (they are
-     * derived from session logs and SDK timestamps, not secrets) writes a bogus
-     * anchor for it FIRST. When the operator later runs `traceglass anchor
-     * --all`, the genuine anchor is silently skipped and the output says
-     * "(1 already anchored)" — reported as a successful no-op. The WORM copy
-     * now permanently holds the attacker's hash for that run, and the real one
-     * was never written.
-     *
-     * WHAT SHOULD HAPPEN: dedupe on (runId, runHash). A runId already present
-     * with a DIFFERENT hash is a conflict that must be surfaced loudly, not
-     * skipped.
+     * NOW: dedupe is on the PAIR (runId, runHash). A run id present with a
+     * different hash is a CONFLICT: the genuine anchor is written anyway and
+     * the CLI reports it loudly and exits non-zero.
      */
     const suppressFile = join(home, 'suppressed.jsonl');
-    // The attacker gets there first with a wrong hash for a real run id.
     writeFileSync(
       suppressFile,
       JSON.stringify({
@@ -173,67 +181,107 @@ describe('ATTACK 3: anchor forgery', () => {
       }) + '\n',
     );
 
-    // Now the operator anchors for real. This mirrors bin.ts `anchor --all`.
+    // This mirrors the dedupe logic in bin.ts `anchor --all`.
     const sink = new FileAnchorSink(suppressFile);
-    const existing = sink.existingRunIds();
-    const fresh = [genuine].filter((r) => !existing.has(r.id));
-    await sink.append(fresh.map(anchorRecordForRun));
+    const existing = sink.existingAnchors();
+    const hashes = existing.get(genuine.id);
+    const alreadyAnchored = hashes?.has(genuine.runHash) ?? false;
+    const conflict = hashes !== undefined && !alreadyAnchored;
 
-    expect(fresh).toHaveLength(0); // <-- the genuine anchor was never written
-    const records = readFileSync(suppressFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
-    expect(records).toHaveLength(1);
-    expect(records[0].runHash).toBe('b'.repeat(64)); // only the attacker's hash survives
-    expect(records[0].runHash).not.toBe(genuine.runHash);
+    expect(alreadyAnchored).toBe(false);
+    expect(conflict).toBe(true); // <-- surfaced, not swallowed
+
+    await sink.append([anchorRecordForRun(genuine)]);
+    const records = readFileSync(suppressFile, 'utf8')
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l) as AnchorRecord);
+    expect(records).toHaveLength(2);
+    // The genuine anchor SURVIVES alongside the attacker's.
+    expect(records.some((r) => r.runHash === genuine.runHash)).toBe(true);
+
+    // And a verifier can tell which one is real: the attacker's record fails.
+    const check = verifyRunAgainstAnchors(genuine, records);
+    expect(check.matched).toBe(true);
+    expect(check.ok).toBe(false);
+    expect(check.problems.join(' ')).toMatch(/anchor MISMATCH/);
   });
 
-  it('VULNERABILITY: malformed lines are silently skipped, so entries can be hidden', async () => {
+  it('FIXED: malformed and deleted lines are integrity failures, not silent skips', () => {
     /*
-     * VULNERABILITY: `existingRunIds()` swallows JSON parse errors ("Skip
-     * malformed lines; they don't block new anchors"). Combined with the
-     * absence of any chaining, this means an attacker can corrupt or delete a
-     * specific anchor line and the file still reads as valid — the record
-     * simply ceases to exist, with nothing to indicate a gap.
+     * WAS: the reader swallowed JSON parse errors, so an attacker could corrupt
+     * or delete a specific anchor line and the file still read as valid — the
+     * record simply ceased to exist, with nothing to indicate a gap. Deletion
+     * from an append-only evidence file was undetectable.
      *
-     * REAL-WORLD CONSEQUENCE: deletion from an append-only evidence file is
-     * undetectable. The lenient parse is reasonable for a writer; it is
-     * dangerous for something described as the out-of-band source of truth.
-     *
-     * WHAT SHOULD HAPPEN: a reader that verifies (which does not exist yet)
-     * must treat an unparseable line as an integrity failure, and records
-     * should chain so a removal breaks the sequence.
+     * NOW: readAnchorFile() treats an unparseable line as an integrity failure
+     * AND the chain makes a removal break the following record's link.
      */
     const tamperFile = join(home, 'tampered-anchors.jsonl');
-    writeFileSync(
-      tamperFile,
-      [
-        JSON.stringify({ version: 1, runId: 'run-a', runHash: 'a'.repeat(64), anchoredAt: 'x' }),
-        JSON.stringify({ version: 1, runId: 'run-b', runHash: 'b'.repeat(64), anchoredAt: 'x' }),
-        JSON.stringify({ version: 1, runId: 'run-c', runHash: 'c'.repeat(64), anchoredAt: 'x' }),
-      ].join('\n') + '\n',
-    );
-    expect(new FileAnchorSink(tamperFile).existingRunIds().size).toBe(3);
+    const chained = new FileAnchorSink(tamperFile);
+    return (async () => {
+      await chained.append(
+        ['run-a', 'run-b', 'run-c'].map((id) => ({
+          version: 2 as const,
+          runId: id,
+          runHash: id.slice(-1).repeat(64),
+          anchoredAt: '2026-01-01T00:00:00.000Z',
+        })),
+      );
+      expect(readAnchorFile(tamperFile).ok).toBe(true);
+      expect(readAnchorFile(tamperFile).records).toHaveLength(3);
 
-    // Corrupt the middle record. The file still parses "fine" — one short.
-    const corrupted = readFileSync(tamperFile, 'utf8').replace(/^.*run-b.*$/m, '{"runId": broken');
-    writeFileSync(tamperFile, corrupted);
-    const ids = new FileAnchorSink(tamperFile).existingRunIds();
-    expect(ids.size).toBe(2); // <-- THE HOLE: run-b vanished, no error raised
-    expect(ids.has('run-b')).toBe(false);
+      // Corrupt the middle record.
+      const corrupted = readFileSync(tamperFile, 'utf8').replace(
+        /^.*run-b.*$/m,
+        '{"runId": broken',
+      );
+      writeFileSync(tamperFile, corrupted);
+      const afterCorruption = readAnchorFile(tamperFile);
+      expect(afterCorruption.ok).toBe(false); // <-- THE HOLE IS CLOSED
+      expect(afterCorruption.malformed).toHaveLength(1);
+      expect(afterCorruption.malformed[0]!.reason).toMatch(/not valid JSON/);
 
-    // Outright deleting the line is likewise invisible.
-    writeFileSync(tamperFile, corrupted.split('\n').filter((l) => !l.includes('broken')).join('\n'));
-    expect(new FileAnchorSink(tamperFile).existingRunIds().size).toBe(2);
+      // Outright deleting the line is likewise visible now: run-c's chain link
+      // points at a line that is no longer there.
+      writeFileSync(
+        tamperFile,
+        corrupted
+          .split('\n')
+          .filter((l) => l.trim() && !l.includes('broken'))
+          .join('\n') + '\n',
+      );
+      const afterDeletion = readAnchorFile(tamperFile);
+      expect(afterDeletion.records).toHaveLength(2);
+      expect(afterDeletion.ok).toBe(false); // <-- deletion detected
+      expect(afterDeletion.chainBreaks[0]!.reason).toMatch(/chains to/);
+    })();
+  });
+
+  it('FIXED: editing a stored record invalidates its signature', async () => {
+    // The subtlest tamper: leave the run alone, adjust when it was anchored so
+    // it appears to predate an incident.
+    const file = join(home, 'edited.jsonl');
+    await new FileAnchorSink(file).append([anchorRecordForRun(genuine)]);
+    const record = JSON.parse(readFileSync(file, 'utf8').trim()) as AnchorRecord;
+    expect(record.recordSignature).toBeDefined();
+
+    const backdated: AnchorRecord = { ...record, anchoredAt: '2019-01-01T00:00:00.000Z' };
+    const check = verifyRunAgainstAnchors(genuine, [backdated]);
+    expect(check.ok).toBe(false);
+    expect(check.problems.join(' ')).toMatch(/record signature INVALID/);
   });
 
   it('a record without a runId is ignored, so it cannot poison the dedupe set', () => {
     const f = join(home, 'noid.jsonl');
     writeFileSync(f, JSON.stringify({ version: 1, runHash: 'x'.repeat(64) }) + '\n');
-    expect(new FileAnchorSink(f).existingRunIds().size).toBe(0);
+    expect(new FileAnchorSink(f).existingAnchors().size).toBe(0);
+    // But a verifier still flags it rather than passing over it.
+    expect(readAnchorFile(f).ok).toBe(false);
+    expect(readAnchorFile(f).malformed[0]!.reason).toMatch(/no runId/);
   });
 
   it('anchoring an unsigned run records no signature to borrow', () => {
-    // Pinning a property that matters: an anchor cannot invent a signature for
-    // a run that never had one.
     const unsigned = ingestAndFinalize({
       id: 'unsigned-run',
       name: 'x',
@@ -249,9 +297,6 @@ describe('ATTACK 3: anchor forgery', () => {
   });
 
   it('the anchor carries the run’s OWN hash, not one the caller can inject', () => {
-    // anchorRecordForRun derives runHash from the run object; there is no
-    // parameter for it, which closes the most obvious forgery route through the
-    // supported API (as opposed to editing the file directly).
     const record = anchorRecordForRun(maybeSign(genuine));
     expect(record.runHash).toBe(genuine.runHash);
     expect(Object.keys(record).sort()).toEqual([
@@ -262,5 +307,160 @@ describe('ATTACK 3: anchor forgery', () => {
       'signature',
       'version',
     ]);
+  });
+});
+
+describe('ATTACK 3b: forging or misappropriating an external proof', () => {
+  /**
+   * With external sinks the attacker's cheapest move is no longer to fabricate
+   * a proof — that needs the TSA's key — but to STEAL a genuine one: attach a
+   * real, fully-valid timestamp token that was issued over something else.
+   * The binding between the token and this specific run is the only thing
+   * standing in the way.
+   */
+
+  const foreignToken = parseTimeStampResponse(
+    readFileSync(join(FIXTURES, 'response.tsr')),
+  ).tokenDer!;
+  const anchorToken = parseTimeStampResponse(
+    readFileSync(join(FIXTURES, 'anchor-response.tsr')),
+  ).tokenDer!;
+  const canned = JSON.parse(readFileSync(join(FIXTURES, 'anchor-run.json'), 'utf8')) as {
+    runId: string;
+    runHash: string;
+    keyId: string;
+    signature: string;
+  };
+  const tsaCertPem = readFileSync(join(FIXTURES, 'tsa-cert.pem'), 'utf8');
+
+  /** A Run-shaped object matching the canned fixture statement. */
+  const cannedRun = {
+    id: canned.runId,
+    runHash: canned.runHash,
+    signature: { keyId: canned.keyId, signature: canned.signature },
+  } as unknown as Run;
+
+  it('the anchor statement format is frozen — the committed fixture still reproduces', () => {
+    /*
+     * If anchorStatement() ever drifts, every anchor issued before the change
+     * silently stops verifying. The fixture bytes were written by the
+     * generator script, independently of this implementation.
+     */
+    const expected = readFileSync(join(FIXTURES, 'anchor-statement.bin'));
+    expect(anchorStatement(cannedRun).equals(expected)).toBe(true);
+  });
+
+  it('a genuine TSA token over this run’s statement verifies end to end', () => {
+    const record: AnchorRecord = {
+      version: 2,
+      runId: canned.runId,
+      runHash: canned.runHash,
+      keyId: canned.keyId,
+      signature: canned.signature,
+      anchoredAt: '2026-07-25T00:00:00.000Z',
+      proof: {
+        type: 'rfc3161',
+        token: anchorToken.toString('base64'),
+        genTime: '2026-07-25T00:00:00.000Z',
+        hashAlgorithm: 'sha256',
+      },
+    };
+    const check = verifyRunAgainstAnchors(cannedRun, [record], { tsaCertPem });
+    expect(check.problems).toEqual([]);
+    expect(check.ok).toBe(true);
+    expect(check.strength).toBe('external');
+    expect(check.rfc3161?.certPinned).toBe(true);
+    expect(check.provenExistedBy).not.toBeNull();
+  });
+
+  it('THE ATTACK: a genuine token issued over a DIFFERENT document is rejected', () => {
+    // `response.tsr` is a real, cryptographically valid TSA token — it simply
+    // timestamps something that is not this run's anchor statement.
+    const record: AnchorRecord = {
+      version: 2,
+      runId: canned.runId,
+      runHash: canned.runHash,
+      keyId: canned.keyId,
+      signature: canned.signature,
+      anchoredAt: '2026-07-25T00:00:00.000Z',
+      proof: {
+        type: 'rfc3161',
+        token: foreignToken.toString('base64'),
+        genTime: '2026-07-25T00:00:00.000Z',
+        hashAlgorithm: 'sha256',
+      },
+    };
+    const check = verifyRunAgainstAnchors(cannedRun, [record], { tsaCertPem });
+    expect(check.ok).toBe(false);
+    expect(check.rfc3161?.imprintOk).toBe(false);
+    expect(check.problems.join(' ')).toMatch(/messageImprint mismatch/);
+  });
+
+  it('an unpinned TSA is reported as self-attested, never as external proof', () => {
+    /*
+     * The trap this product must not fall into twice: verifying a token
+     * against the certificate inside that same token is the same closed loop
+     * as verifying a run against its own embedded key. It must never be
+     * presented as third-party proof.
+     */
+    const record: AnchorRecord = {
+      version: 2,
+      runId: canned.runId,
+      runHash: canned.runHash,
+      keyId: canned.keyId,
+      signature: canned.signature,
+      anchoredAt: '2026-07-25T00:00:00.000Z',
+      proof: {
+        type: 'rfc3161',
+        token: anchorToken.toString('base64'),
+        genTime: '2026-07-25T00:00:00.000Z',
+        hashAlgorithm: 'sha256',
+      },
+    };
+    const check = verifyRunAgainstAnchors(cannedRun, [record]); // no --tsa-cert
+    expect(check.ok).toBe(true);
+    expect(check.strength).toBe('self-attested'); // <-- NOT 'external'
+    expect(check.messages.join(' ')).toMatch(/NOT pinned/);
+  });
+
+  it('a proof cannot be moved to another run, because the statement binds the run id', () => {
+    // Same token, but presented for a run with a different id and hash.
+    const otherRun = { ...cannedRun, id: 'some-other-run' } as Run;
+    const record: AnchorRecord = {
+      version: 2,
+      runId: 'some-other-run',
+      runHash: canned.runHash,
+      keyId: canned.keyId,
+      signature: canned.signature,
+      anchoredAt: '2026-07-25T00:00:00.000Z',
+      proof: {
+        type: 'rfc3161',
+        token: anchorToken.toString('base64'),
+        genTime: '2026-07-25T00:00:00.000Z',
+        hashAlgorithm: 'sha256',
+      },
+    };
+    const check = verifyRunAgainstAnchors(otherRun, [record], { tsaCertPem });
+    expect(check.ok).toBe(false);
+    expect(check.rfc3161?.imprintOk).toBe(false);
+  });
+
+  it('the digest sent to a TSA leaks nothing about the run', () => {
+    const statement = anchorStatement(genuine);
+    const digest = anchorDigest(statement);
+    expect(digest).toHaveLength(32);
+    // Only the digest crosses the wire; the statement itself never does.
+    const hex = digest.toString('hex');
+    expect(hex).not.toContain(genuine.id);
+    expect(statement.toString('utf8')).not.toContain('payments.refund');
+    expect(statement.toString('utf8')).not.toContain('4471');
+  });
+
+  it('a run with no anchor at all is reported, not quietly passed', () => {
+    const check = verifyRunAgainstAnchors(genuine, []);
+    expect(check.found).toBe(0);
+    expect(check.strength).toBe('none');
+    expect(check.matched).toBe(false);
+    expect(check.messages.join(' ')).toMatch(/no anchor record/);
   });
 });
