@@ -61,7 +61,7 @@ const program = new Command();
 program
   .name('traceglass')
   .description('Flight recorder & tamper-evident audit dashboard for autonomous agents')
-  .version('0.9.0');
+  .version('1.0.0');
 
 function openStore(): RunStore {
   return new RunStore(storePath());

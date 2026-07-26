@@ -124,8 +124,18 @@ def test_03_hash(step, expected):
 
 
 def test_03_step_count():
-    # minimal (2) + committed (1) + redacted (1)
-    assert sum(len(v) for v in STEPS["runs"].values()) == 4
+    """Every step vector in the corpus is actually exercised.
+
+    The point of this guard is that a loader which silently skipped a run
+    group would make the parametrized tests above pass vacuously. It is not to
+    pin an exact number — the corpus grows as gaps are found (the unicode
+    group was added to cover NFC vs NFD), so a hardcoded count turns a
+    legitimate addition into a failure.
+    """
+    total = sum(len(v) for v in STEPS["runs"].values())
+    assert total == len(_step_cases()), "a step vector is present but not exercised"
+    assert all(len(v) > 0 for v in STEPS["runs"].values()), "empty run group in the corpus"
+    assert total >= 4, "the corpus must never shrink"
 
 
 # --------------------------------------------------------------------------
