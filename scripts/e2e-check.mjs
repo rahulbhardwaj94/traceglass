@@ -122,26 +122,44 @@ check('serve ingests with the right token (200) and rejects a wrong one (401)', 
       [
         '-e',
         `
+      // node:http with keep-alive off, not fetch. fetch's pooled sockets are
+      // still open when the script calls process.exit, and on Windows that
+      // tripped a libuv assertion inside Node itself:
+      //   Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), src\\\\win\\\\async.c
+      // The request never failed — the process crashed on the way out, which
+      // read as a broken auth check. Explicit sockets we close ourselves keep
+      // this test about traceglass rather than about undici's exit behaviour.
+      const http = require('http');
       const body = require('fs').readFileSync(${JSON.stringify(nativeFixture)}, 'utf8');
+      const request = (opts, payload) => new Promise((resolve, reject) => {
+        const req = http.request({ host: '127.0.0.1', port: 43180, agent: false, ...opts }, (res) => {
+          res.resume();
+          res.on('end', () => resolve(res.statusCode));
+        });
+        req.on('error', reject);
+        req.end(payload);
+      });
       async function main() {
         for (let i = 0; i < 40; i++) {
-          try { await fetch('http://127.0.0.1:43180/api/runs'); break; }
+          try { await request({ method: 'GET', path: '/api/runs' }); break; }
           catch { await new Promise(r => setTimeout(r, 250)); }
         }
-        const ok = await fetch('http://127.0.0.1:43180/api/ingest', {
+        const post = (token) => request({
           method: 'POST',
-          headers: { 'content-type': 'application/json', authorization: 'Bearer t0ken' },
-          body,
-        });
-        if (ok.status !== 200) throw new Error('expected 200, got ' + ok.status);
-        const bad = await fetch('http://127.0.0.1:43180/api/ingest', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', authorization: 'Bearer nope' },
-          body,
-        });
-        if (bad.status !== 401) throw new Error('expected 401, got ' + bad.status);
+          path: '/api/ingest',
+          headers: {
+            'content-type': 'application/json',
+            authorization: 'Bearer ' + token,
+            'content-length': Buffer.byteLength(body),
+          },
+        }, body);
+        const ok = await post('t0ken');
+        if (ok !== 200) throw new Error('expected 200, got ' + ok);
+        const bad = await post('nope');
+        if (bad !== 401) throw new Error('expected 401, got ' + bad);
       }
-      main().then(() => process.exit(0), (e) => { console.error(e.message); process.exit(1); });
+      // Set exitCode and let the loop drain, rather than exiting under it.
+      main().then(() => { process.exitCode = 0; }, (e) => { console.error(e.message); process.exitCode = 1; });
     `,
       ],
       { encoding: 'utf8' },
