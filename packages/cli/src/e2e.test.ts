@@ -52,11 +52,20 @@ afterAll(() => {
 describe('v0.3 outcome test', () => {
   let sdkRun: Run;
 
-  it('1. keygen creates a 0600 private key and a 16-hex keyId', () => {
-    const { keyId } = generateKeys();
+  it('1. keygen creates an owner-only private key and a 16-hex keyId', () => {
+    const { keyId, ownerOnly } = generateKeys();
     expect(keyId).toMatch(/^[0-9a-f]{16}$/);
     const mode = statSync(join(home, 'keys', 'private.pem')).mode & 0o777;
-    expect(mode).toBe(0o600);
+
+    if (process.platform === 'win32') {
+      // Windows has no POSIX permission bits, so the 0600 request cannot take
+      // effect and the key is readable by other accounts. keygen must report
+      // that rather than print a protection claim that is false here.
+      expect(ownerOnly).toBe(false);
+    } else {
+      expect(mode).toBe(0o600);
+      expect(ownerOnly).toBe(true);
+    }
     expect(loadKeys()!.keyId).toBe(keyId);
   });
 

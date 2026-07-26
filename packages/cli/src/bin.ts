@@ -832,7 +832,16 @@ program
     }
     console.log(`Generated Ed25519 signing key (keyId ${result.keyId}).`);
     console.log(`Public key: ${result.publicKeyFile}`);
-    console.log('New runs will be signed at ingest. The private key stays local (mode 0600).');
+    if (result.ownerOnly) {
+      console.log('New runs will be signed at ingest. The private key stays local (mode 0600).');
+    } else {
+      console.log('New runs will be signed at ingest. The private key stays local.');
+      console.log(
+        `⚠ This filesystem does not enforce owner-only permissions, so ${result.privateKeyFile}\n` +
+          '  is readable by other accounts on this machine. Anyone who reads it can sign runs\n' +
+          '  that verify as yours. Restrict it yourself, or keep signing keys off shared hosts.',
+      );
+    }
   });
 
 program

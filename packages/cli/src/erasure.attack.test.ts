@@ -8,7 +8,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import Database from 'better-sqlite3';
 import {
@@ -87,7 +87,9 @@ function allFiles(dir: string): string[] {
 function leakingFiles(dir: string, needle: string): string[] {
   return allFiles(dir)
     .filter((f) => fileContainsBytes(f, needle))
-    .map((f) => f.slice(dir.length))
+    // Report POSIX-style paths so the expectations below read the same on
+    // Windows, where join() yields backslashes.
+    .map((f) => f.slice(dir.length).split(sep).join('/'))
     .sort();
 }
 

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { generateKeyPairSync } from 'node:crypto';
 import { keyIdFromPublicKey, signRun, type Run } from '@traceglass/core';
@@ -34,6 +34,9 @@ export function generateKeys(opts: { force?: boolean } = {}): {
   publicKeyPem: string;
   keyId: string;
   publicKeyFile: string;
+  privateKeyFile: string;
+  /** False when the filesystem ignored the 0600 request (Windows). */
+  ownerOnly: boolean;
 } {
   if (existsSync(privateKeyPath()) && !opts.force) {
     throw new Error(
@@ -46,7 +49,26 @@ export function generateKeys(opts: { force?: boolean } = {}): {
   mkdirSync(keysDir(), { recursive: true });
   writeFileSync(privateKeyPath(), privateKeyPem, { mode: 0o600 });
   writeFileSync(publicKeyPath(), publicKeyPem);
-  return { publicKeyPem, keyId: keyIdFromPublicKey(publicKeyPem), publicKeyFile: publicKeyPath() };
+  return {
+    publicKeyPem,
+    keyId: keyIdFromPublicKey(publicKeyPem),
+    publicKeyFile: publicKeyPath(),
+    privateKeyFile: privateKeyPath(),
+    ownerOnly: privateKeyIsOwnerOnly(),
+  };
+}
+
+/**
+ * Did the 0600 request actually take effect?
+ *
+ * Windows has no POSIX permission bits — Node's mode argument only toggles the
+ * read-only flag there, so the key lands world-readable to every account on the
+ * machine. The protection is real on POSIX and absent on Windows, and callers
+ * must not print a blanket "mode 0600" claim that is false on one of them.
+ */
+export function privateKeyIsOwnerOnly(): boolean {
+  if (!existsSync(privateKeyPath())) return false;
+  return (statSync(privateKeyPath()).mode & 0o077) === 0;
 }
 
 /** Load the keypair, or null if none has been generated. */
