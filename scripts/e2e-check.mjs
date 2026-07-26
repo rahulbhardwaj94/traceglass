@@ -28,6 +28,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const bin = join(root, 'packages/cli/dist/bin.js');
 const sdk = join(root, 'packages/sdk/dist/index.js');
+// ESM specifiers must be file:// URLs when absolute: on Windows a bare
+// "D:\\a\\..." path is read as protocol 'd:' and the loader refuses it.
+// Every generated child script below imports through this, not `sdk`.
+const sdkSpecifier = JSON.stringify(pathToFileURL(sdk).href);
 const nativeFixture = join(root, 'fixtures/sample-run-native.json');
 
 const home = mkdtempSync(join(tmpdir(), 'tg-check-'));
@@ -79,7 +83,7 @@ check('keygen generates a signing key', () => {
 let runId = '';
 check('SDK records a live run into the store', () => {
   const script = `
-    import { startRecording } from ${JSON.stringify(pathToFileURL(sdk).href)};
+    import { startRecording } from ${sdkSpecifier};
     const rec = startRecording({ name: 'outcome-check agent', id: 'check-run' });
     rec.step({ type: 'user_input', label: 'Dun account 4471', input: { account: '4471' } });
     rec.step({ type: 'tool_call', toolName: 'get_payment_status', label: 'Tool: get_payment_status',
@@ -349,13 +353,13 @@ check('tail sees an in-progress recording and its warnings before it ends', () =
   const agent = join(out, 'slow-agent.mjs');
   writeFileSync(
     agent,
-    `import { startRecording } from ${JSON.stringify(sdk)};
+    `import { startRecording } from ${sdkSpecifier};
      const sleep = (ms) => new Promise(r => setTimeout(r, ms));
      const rec = startRecording({ name: 'slow agent', id: 'tail-run' });
      rec.step({ type: 'user_input', label: 'start' });
      for (let i = 0; i < 3; i++) {
        rec.step({ type: 'tool_call', toolName: 'get_status', label: 'Tool: get_status', cost: 1 });
-       await sleep(400);
+       await sleep(800);
      }
      await rec.end();`,
   );
@@ -364,9 +368,19 @@ check('tail sees an in-progress recording and its warnings before it ends', () =
     stdio: 'ignore',
   });
   try {
-    // Give the agent time to emit a couple of steps, then look while it runs.
-    execFileSync('node', ['-e', 'setTimeout(()=>{},700)'], { encoding: 'utf8' });
-    const listed = cli(['tail', '--list'], { home: tailHome });
+    // Poll for the recording rather than sleeping a fixed interval: node
+    // startup plus module load can outlast any constant we pick on a slow
+    // runner, and a fixed wait turns that into an intermittent red build.
+    let listed = '';
+    for (let i = 0; i < 40; i++) {
+      try {
+        listed = cli(['tail', '--list'], { home: tailHome });
+        if (/tail-run/.test(listed)) break;
+      } catch {
+        /* the recording may not exist yet — keep waiting */
+      }
+      execFileSync('node', ['-e', 'setTimeout(()=>{},100)'], { encoding: 'utf8' });
+    }
     assert(/tail-run/.test(listed), `live recording not listed: ${listed}`);
 
     // Follow it to completion; the loop warning must appear mid-flight.
@@ -387,7 +401,7 @@ check('redact removes PII while the anchor and signature stay valid', () => {
   const recFile = join(out, 'record-pii.mjs');
   writeFileSync(
     recFile,
-    `import { startRecording } from ${JSON.stringify(sdk)};
+    `import { startRecording } from ${sdkSpecifier};
      const rec = startRecording({ name: 'pii', id: 'pii-run' });
      rec.step({ type: 'user_input', label: 'Lookup', input: { ssn: '123-45-6789', keep: 'visible' } });
      await rec.end();`,
